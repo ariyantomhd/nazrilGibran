@@ -17,21 +17,25 @@ export const paymentService = {
     if (!order) throw new Error('Order tidak ditemukan atau akses ditolak');
     if (order.payment_status === 'PAID') throw new Error('Order ini sudah dibayar');
 
+    const frontendUrl = (process.env.FRONTEND_URL || 'https://www.themavia.com').replace(/\/$/, '');
+    const formattedAmount = Number(order.grand_total).toFixed(2);
+
     const request = new paypal.orders.OrdersCreateRequest();
     request.prefer('return=representation');
     
     request.requestBody({
       intent: 'CAPTURE',
       application_context: {
-        return_url: 'http://localhost:3000/checkout/success',
-        cancel_url: 'http://localhost:3000/cart',
+        brand_name: 'Themavia Digital Studio',
+        return_url: `${frontendUrl}/checkout/success`,
+        cancel_url: `${frontendUrl}/cart`,
         user_action: 'PAY_NOW'
       },
       purchase_units: [{
         reference_id: order.id,
         amount: {
           currency_code: 'USD',
-          value: order.grand_total.toString()
+          value: formattedAmount
         }
       }]
     });
@@ -41,6 +45,10 @@ export const paymentService = {
       const paypalOrder = response.result;
       const approveLink = paypalOrder.links.find((link: any) => link.rel === 'approve');
 
+      if (!approveLink) {
+        throw new Error('Link persetujuan PayPal tidak ditemukan pada respons');
+      }
+
       return {
         order_id: order.id,
         gateway: 'PAYPAL',
@@ -48,6 +56,7 @@ export const paymentService = {
         status: paypalOrder.status
       };
     } catch (error: any) {
+      console.error('[PAYPAL_SERVICE_ERROR] Create Order Failed:', error?.message || error);
       throw new Error(`Gagal terhubung ke PayPal: ${error.message}`);
     }
   },
@@ -107,6 +116,7 @@ export const paymentService = {
 
       throw new Error('Pembayaran ditolak atau belum selesai dari pihak PayPal');
     } catch (error: any) {
+      console.error('[PAYPAL_SERVICE_ERROR] Capture Order Failed:', error?.message || error);
       throw new Error(`Gagal mencairkan pembayaran PayPal: ${error.message}`);
     }
   }
