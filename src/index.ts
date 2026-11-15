@@ -55,6 +55,20 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Middleware untuk Mengatur Security Headers (Termasuk CSP yang mengizinkan Cloudflare Insights)
+app.use((req, res, next) => {
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; " +
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:5000 https://*.paypal.com https://*.paypalobjects.com https://www.googletagmanager.com https://www.google-analytics.com https://*.google.com https://*.google.co.id https://static.cloudflareinsights.com; " +
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+    "font-src 'self' https://fonts.gstatic.com; " +
+    "img-src 'self' blob: data: https:; " +
+    "connect-src 'self' http://localhost:5000 https://*.supabase.co https://*.paypal.com;"
+  );
+  next();
+});
+
 // Root & Health Check Route
 app.get('/', (req: Request, res: Response) => {
   res.status(200).json({
