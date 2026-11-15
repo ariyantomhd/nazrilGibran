@@ -4,19 +4,22 @@ import { RegisterPayload, LoginPayload, UpdateUserProfileInput, UpdateUserPasswo
 import { supabaseAdmin } from '../../config/supabase';
 import { sendVerificationEmail } from '../../utils/email/verify';
 import { ClientTelemetryData } from '../../utils/clientTelemetry';
+import { createClient } from '@supabase/supabase-js';
+
+const clientForAuth = createClient(
+  process.env.SUPABASE_URL || '',
+  process.env.SUPABASE_PUBLISHABLE_KEY || ''
+);
 
 export const authService = {
   async register(payload: RegisterPayload, telemetry?: ClientTelemetryData) {
-    // 1. Buat user di Supabase Auth (Trigger otomatis DB jalan di sini)
     const user = await authRepo.registerUser(payload);
     if (!user) throw new Error('Gagal mendaftarkan user');
 
-    // 2. Simpan telemetry IP, device, negara & deteksi VPN
     if (telemetry && user.id) {
       await authRepo.updateUserTelemetry(user.id, telemetry);
     }
 
-    // 3. Generate Link Konfirmasi dari Supabase Admin
     const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
       type: 'signup',
       email: payload.email,
@@ -27,9 +30,8 @@ export const authService = {
       console.warn('[GenerateLink Warning]:', linkError?.message);
     }
 
-    const confirmationUrl = linkData?.properties?.action_link || `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify?token=${user.id}`;
+    const confirmationUrl = linkData?.properties?.action_link || `${process.env.FRONTEND_URL || 'https://www.themavia.com'}/verify?token=${user.id}`;
 
-    // 4. Kirim email secara asynchronous non-blocking
     sendVerificationEmail(payload.email, confirmationUrl)
       .then(() => {
         console.log('✨ [SMTP Success]: Email konfirmasi berhasil dikirim ke:', payload.email);
@@ -54,11 +56,11 @@ export const authService = {
   },
 
   async getSocialAuthUrl(provider: 'google' | 'twitter') {
-    const { data, error } = await supabaseAdmin.auth.signInWithOAuth({
+    const { data, error } = await clientForAuth.auth.signInWithOAuth({
       provider,
       options: {
-        redirectTo: process.env.FRONTEND_URL || 'http://localhost:3000/dashboard',
-        skipBrowserRedirect: true, // Wajib agar mengembalikan URL JSON ke backend/frontend
+        redirectTo: `https://api.themavia.com/api/auth/${provider}/callback`,
+        skipBrowserRedirect: true,
       },
     });
 
@@ -66,6 +68,12 @@ export const authService = {
     if (!data?.url) throw new Error(`Gagal mendapatkan URL ${provider} Auth`);
 
     return data.url;
+  },
+
+  async handleSocialCallback(code: string) {
+    const { data, error } = await clientForAuth.auth.exchangeCodeForSession(code);
+    if (error) throw new Error(error.message);
+    return data;
   },
 
   async getMe(userId: string) {

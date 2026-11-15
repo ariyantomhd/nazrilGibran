@@ -17,15 +17,12 @@ const supabaseAuthClient = createClient(
 
 export const authRepo = {
   async registerUser(payload: RegisterPayload) {
-    // 1. Buat user menggunakan admin API dengan status belum terkonfirmasi
     const { data, error } = await supabaseAdmin.auth.admin.createUser({
       email: payload.email,
       password: payload.password,
       email_confirm: false 
     });
     if (error) throw new Error(error.message);
-    
-    // (Trigger di database Supabase akan otomatis menangani pembuatan record di tabel public.users)
     return data.user;
   },
 

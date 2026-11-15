@@ -39,6 +39,27 @@ export const authController = {
     }
   },
 
+  async socialCallback(req: Request, res: Response): Promise<void> {
+    try {
+      const { provider } = req.params;
+      const { code } = req.query;
+
+      if (!code) {
+        res.redirect('https://www.themavia.com/login?error=NoCodeProvided');
+        return;
+      }
+
+      const sessionData = await (authService as any).handleSocialCallback(String(code));
+      const accessToken = sessionData?.session?.access_token;
+      const refreshToken = sessionData?.session?.refresh_token;
+
+      // Redirect mulus kembali ke frontend themavia.com
+      res.redirect(`https://www.themavia.com/auth/success?access_token=${accessToken}&refresh_token=${refreshToken}`);
+    } catch (error: any) {
+      res.redirect(`https://www.themavia.com/login?error=${encodeURIComponent(error.message)}`);
+    }
+  },
+
   async getProfile(req: Request, res: Response): Promise<void> {
     try {
       const userId = req.userId;

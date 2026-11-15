@@ -12,12 +12,13 @@ router.post('/reset-password', authController.resetPassword);
 router.post('/confirmation', authController.confirmation);
 router.post('/signout', authController.signout);
 
-// Endpoint Privat (Wajib di atas /:provider agar /profile tidak dianggap sebagai :provider)
+// Endpoint Privat
 router.get('/profile', verifyAuth, authController.getProfile);
 router.put('/profile', verifyAuth, authController.updateProfile);
 router.put('/password', verifyAuth, authController.updatePassword);
 
-// Endpoint Social Auth (Google & Twitter)
+// Endpoint Social Auth & Callback (Wajib di bawah route spesifik agar tidak bentrok)
+router.get('/:provider/callback', authController.socialCallback);
 router.get('/:provider', authController.socialAuth);
 
 export default router;
