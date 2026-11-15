@@ -2,20 +2,20 @@
 /// <reference path="../types/paypal.d.ts" />
 import paypal from '@paypal/checkout-server-sdk';
 
-// Pastikan kamu menambahkan variabel ini di file .env nantinya
-const clientId = process.env.PAYPAL_CLIENT_ID || 'sb'; 
-const clientSecret = process.env.PAYPAL_SECRET || 'sb';
+const clientId = (process.env.PAYPAL_CLIENT_ID || 'sb').trim();
+const clientSecret = (process.env.PAYPAL_SECRET || process.env.PAYPAL_CLIENT_SECRET || 'sb').trim();
+const paypalMode = (process.env.PAYPAL_MODE || 'sandbox').trim().toLowerCase();
 
-// Debugging log untuk mengecek apakah env terbaca atau fallback ke 'sb'
-console.log("CHECKING PAYPAL CONFIG:", {
-  idLoaded: !!process.env.PAYPAL_CLIENT_ID,
-  secretLoaded: !!process.env.PAYPAL_CLIENT_SECRET,
-  mode: process.env.NODE_ENV
+console.log('CHECKING PAYPAL CONFIG:', {
+  idLoaded: clientId !== 'sb' && clientId.length > 0,
+  secretLoaded: clientSecret !== 'sb' && clientSecret.length > 0,
+  paypalMode,
+  nodeEnv: process.env.NODE_ENV,
 });
 
-// Secara default gunakan mode Sandbox untuk development
-const environment = process.env.NODE_ENV === 'production'
-  ? new paypal.core.LiveEnvironment(clientId, clientSecret)
-  : new paypal.core.SandboxEnvironment(clientId, clientSecret);
+const environment =
+  paypalMode === 'live'
+    ? new paypal.core.LiveEnvironment(clientId, clientSecret)
+    : new paypal.core.SandboxEnvironment(clientId, clientSecret);
 
 export const paypalClient = new paypal.core.PayPalHttpClient(environment);
