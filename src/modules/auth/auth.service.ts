@@ -59,7 +59,7 @@ export const authService = {
     const { data, error } = await clientForAuth.auth.signInWithOAuth({
       provider,
       options: {
-        redirectTo: `https://api.themavia.com/api/auth/${provider}/callback`,
+        redirectTo: `https://pgxslsiwddoqcztfnakq.supabase.co/auth/v1/callback`,
         skipBrowserRedirect: true,
       },
     });
