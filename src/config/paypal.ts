@@ -1,4 +1,5 @@
 // src/config/paypal.ts
+/// <reference path="../types/paypal.d.ts" />
 import paypal from '@paypal/checkout-server-sdk';
 
 // Pastikan kamu menambahkan variabel ini di file .env nantinya

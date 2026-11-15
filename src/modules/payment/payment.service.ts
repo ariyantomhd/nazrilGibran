@@ -1,4 +1,5 @@
 // src/modules/payment/payment.service.ts
+/// <reference path="../../types/paypal.d.ts" />
 import paypal from '@paypal/checkout-server-sdk';
 import { paypalClient } from '../../config/paypal';
 import { orderRepo } from '../orders/order.repo';
