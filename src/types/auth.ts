@@ -2,39 +2,34 @@
 import { Request } from 'express';
 import { UserRole, AccountStatus } from './enums';
 
+export type SocialProvider = 'google' | 'facebook' | 'x' | 'discord';
+
+export interface SocialUserProfile {
+  provider: SocialProvider;
+  providerId: string;
+  email: string | null;
+  username: string;
+  avatarUrl: string | null;
+}
+
 export interface User {
   id: string;
   email: string;
-  password?: string;
   username: string;
   creator_number?: number;
   avatar_url: string | null;
+  provider?: SocialProvider;
+  provider_id?: string;
   role: UserRole;
   status: AccountStatus;
+  terms_accepted_at?: string | null;
   created_at: string;
   updated_at: string;
-}
-
-export interface RegisterPayload {
-  email: string;
-  password: string;
-  fullName: string;
-}
-
-export type RegisterDTO = RegisterPayload;
-
-export interface LoginPayload {
-  email: string;
-  password: string;
 }
 
 export interface UpdateUserProfileInput {
   username: string;
   avatar_url: string | null;
-}
-
-export interface UpdateUserPasswordInput {
-  new_password: string;
 }
 
 export interface AuthenticatedUser {
@@ -50,7 +45,6 @@ export interface AuthenticatedRequest extends Request {
   userId?: string;
 }
 
-// Global declaration to inject custom properties into standard Express Request
 declare global {
   namespace Express {
     interface Request {

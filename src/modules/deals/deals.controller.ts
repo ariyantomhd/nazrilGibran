@@ -41,7 +41,7 @@ export const dealsController = {
         data: result,
       });
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Gagal memuat daftar deals.';
+      const message = error instanceof Error ? error.message : 'Failed to load deals list.';
       res.status(500).json({
         success: false,
         message,

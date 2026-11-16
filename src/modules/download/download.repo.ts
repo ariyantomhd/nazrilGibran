@@ -3,7 +3,7 @@ import { supabaseAdmin } from '../../config/supabase';
 import { DownloadLogResponse } from '../../types/download';
 
 export const downloadRepo = {
-  // Mencatat log aktivitas unduhan user
+  // Record user download activity log
   async createDownloadLog(logData: {
     user_id: string;
     product_id: string;
@@ -12,14 +12,14 @@ export const downloadRepo = {
     ip_address?: string;
   }): Promise<DownloadLogResponse | null> {
     const { data, error } = await supabaseAdmin
-      .from('download_logs') // Pastikan tabel ini ada di Supabase abang
+      .from('download_logs')
       .insert([logData])
       .select()
       .single();
 
     if (error) {
-      console.warn('Gagal mencatat log unduhan:', error.message);
-      return null; // Mencegah crash jika tabel log opsional belum dibuat
+      console.warn('Failed to record download log:', error.message);
+      return null; // Prevent crash if optional log table is not yet created
     }
 
     return data as DownloadLogResponse;

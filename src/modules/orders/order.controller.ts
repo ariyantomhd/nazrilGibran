@@ -6,7 +6,7 @@ export const orderController = {
   async createOrder(req: Request, res: Response): Promise<void> {
     try {
       const data = await orderService.createOrder(req.userId!, req.body);
-      res.status(201).json({ success: true, message: 'Order berhasil dibuat', data });
+      res.status(201).json({ success: true, message: 'Order created successfully', data });
     } catch (error: any) {
       res.status(400).json({ success: false, message: error.message });
     }
@@ -23,7 +23,7 @@ export const orderController = {
 
   async getOrderById(req: Request, res: Response): Promise<void> {
     try {
-      // Type casting eksplisit ke string untuk menghindari error 'string | string[]'
+      // Explicit type cast to string to avoid 'string | string[]' type error
       const id = req.params.id as string;
       const data = await orderService.getOrderById(req.userId!, id);
       res.status(200).json({ success: true, data });

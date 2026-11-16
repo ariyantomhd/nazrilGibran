@@ -7,11 +7,11 @@ export const downloadController = {
     try {
       const { license_key } = req.body;
       if (!license_key) {
-        res.status(400).json({ success: false, message: 'License key wajib disertakan' });
+        res.status(400).json({ success: false, message: 'License key is required' });
         return;
       }
 
-      // Ambil IP address client untuk dicatat di log
+      // Capture client IP address for audit logging
       const ipAddress = (req.headers['x-forwarded-for'] || req.socket.remoteAddress) as string;
 
       const data = await downloadService.processDownload(req.userId!, license_key, ipAddress);

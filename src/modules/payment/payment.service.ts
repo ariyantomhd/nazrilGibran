@@ -14,8 +14,8 @@ export const paymentService = {
     console.log(`[PAYPAL_SERVICE] Creating PayPal order for internal order ID: ${dto.order_id}`);
     
     const order = await orderRepo.getOrderById(dto.order_id, userId);
-    if (!order) throw new Error('Order tidak ditemukan atau akses ditolak');
-    if (order.payment_status === 'PAID') throw new Error('Order ini sudah dibayar');
+    if (!order) throw new Error('Order not found or access denied');
+    if (order.payment_status === 'PAID') throw new Error('This order has already been paid');
 
     const frontendUrl = (process.env.FRONTEND_URL || 'https://www.themavia.com').replace(/\/$/, '');
     const formattedAmount = Number(order.grand_total).toFixed(2);
@@ -46,7 +46,7 @@ export const paymentService = {
       const approveLink = paypalOrder.links.find((link: any) => link.rel === 'approve');
 
       if (!approveLink) {
-        throw new Error('Link persetujuan PayPal tidak ditemukan pada respons');
+        throw new Error('PayPal approval link was not found in the response');
       }
 
       return {
@@ -57,13 +57,13 @@ export const paymentService = {
       };
     } catch (error: any) {
       console.error('[PAYPAL_SERVICE_ERROR] Create Order Failed:', error?.message || error);
-      throw new Error(`Gagal terhubung ke PayPal: ${error.message}`);
+      throw new Error(`Failed to connect to PayPal: ${error.message}`);
     }
   },
 
   async capturePayPalOrder(userId: string, orderId: string, paypalToken: string): Promise<any> {
     const order = await orderRepo.getOrderById(orderId, userId);
-    if (!order) throw new Error('Order tidak ditemukan');
+    if (!order) throw new Error('Order not found');
 
     const request = new paypal.orders.OrdersCaptureRequest(paypalToken);
     request.requestBody({});
@@ -75,15 +75,15 @@ export const paymentService = {
       if (captureData.status === 'COMPLETED') {
         const paypalTxId = captureData.purchase_units[0].payments.captures[0].id;
         
-        // 1. Update status order menjadi PAID
+        // 1. Update order status to PAID
         await orderRepo.updatePaymentStatus(order.id, 'PAID', paypalTxId);
 
-        // 2. Generate license key untuk setiap item yang dibeli
+        // 2. Generate license key for each purchased item
         if (order.order_items && order.order_items.length > 0) {
           await licenseService.generateLicensesForOrder(order.id, userId, order.order_items);
         }
 
-        // 3. Hitung & catat komisi affiliate dinamis per item produk (jika memakai kode referral)
+        // 3. Calculate & record dynamic affiliate commission per product item (if referral code used)
         await affiliateService.processOrderAffiliateCommission({
           id: order.id,
           buyer_id: userId,
@@ -91,7 +91,7 @@ export const paymentService = {
           order_items: order.order_items,
         });
 
-        // 4. Simpan log transaksi
+        // 4. Save transaction log
         await paymentRepo.saveTransactionRecord({
           order_id: order.id,
           buyer_id: userId,
@@ -101,7 +101,7 @@ export const paymentService = {
           status: 'COMPLETED'
         });
 
-        // 5. Kosongkan keranjang belanja user
+        // 5. Clear user shopping cart
         const cart = await cartRepo.getCartByUserId(userId);
         if (cart) {
           await cartRepo.clearCartItems(cart.id);
@@ -109,15 +109,15 @@ export const paymentService = {
 
         return { 
           success: true, 
-          message: 'Pembayaran berhasil dan lisensi diterbitkan!', 
+          message: 'Payment successful and licenses issued!', 
           order_id: order.id 
         };
       }
 
-      throw new Error('Pembayaran ditolak atau belum selesai dari pihak PayPal');
+      throw new Error('Payment was declined or not completed by PayPal');
     } catch (error: any) {
       console.error('[PAYPAL_SERVICE_ERROR] Capture Order Failed:', error?.message || error);
-      throw new Error(`Gagal mencairkan pembayaran PayPal: ${error.message}`);
+      throw new Error(`Failed to capture PayPal payment: ${error.message}`);
     }
   }
 };

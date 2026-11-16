@@ -5,7 +5,7 @@ import { UserDashboardData } from '../../types/dashboard';
 export const dashboardService = {
   async getDashboardData(userId: string): Promise<UserDashboardData> {
     const user = await dashboardRepo.getUserProfile(userId);
-    if (!user) throw new Error('Profil pengguna tidak ditemukan');
+    if (!user) throw new Error('User profile not found');
 
     const stats = await dashboardRepo.getDashboardStats(userId);
     const recent_orders = await dashboardRepo.getRecentOrders(userId);

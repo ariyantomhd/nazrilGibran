@@ -30,7 +30,7 @@ export const cartRepo = {
       .single();
 
     if (error && error.code !== 'PGRST116') {
-      throw new Error(`Gagal mengambil keranjang: ${error.message}`);
+      throw new Error(`Failed to fetch cart: ${error.message}`);
     }
 
     if (!data) return null;
@@ -97,7 +97,7 @@ export const cartRepo = {
       .select()
       .single();
 
-    if (error) throw new Error(`Gagal membuat keranjang: ${error.message}`);
+    if (error) throw new Error(`Failed to create cart: ${error.message}`);
     return { ...data, items: [], total_items: 0, subtotal: 0 } as unknown as Cart;
   },
 
@@ -172,7 +172,7 @@ export const cartRepo = {
       .update(updateData)
       .eq('id', itemId);
 
-    if (error) throw new Error(`Gagal update item: ${error.message}`);
+    if (error) throw new Error(`Failed to update cart item: ${error.message}`);
   },
 
   async removeCartItem(itemId: string): Promise<void> {
@@ -181,7 +181,7 @@ export const cartRepo = {
       .delete()
       .eq('id', itemId);
 
-    if (error) throw new Error(`Gagal menghapus item: ${error.message}`);
+    if (error) throw new Error(`Failed to remove cart item: ${error.message}`);
   },
 
   async clearCartItems(cartId: string): Promise<void> {
@@ -190,6 +190,6 @@ export const cartRepo = {
       .delete()
       .eq('cart_id', cartId);
 
-    if (error) throw new Error(`Gagal mengosongkan keranjang: ${error.message}`);
+    if (error) throw new Error(`Failed to clear cart items: ${error.message}`);
   },
 };

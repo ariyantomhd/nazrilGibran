@@ -1,41 +1,124 @@
 // src/modules/auth/auth.repo.ts
-import { createClient } from '@supabase/supabase-js';
+import { randomUUID } from 'crypto';
 import { supabaseAdmin } from '../../config/supabase';
-import { RegisterPayload, LoginPayload } from '../../types/auth';
+import { SocialUserProfile, UpdateUserProfileInput, User } from '../../types/auth';
 import { ClientTelemetryData } from '../../utils/clientTelemetry';
 
-const supabaseAuthClient = createClient(
-  process.env.SUPABASE_URL || '',
-  process.env.SUPABASE_PUBLISHABLE_KEY || '',
-  {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    }
-  }
-);
-
 export const authRepo = {
-  async registerUser(payload: RegisterPayload) {
-    const { data, error } = await supabaseAdmin.auth.admin.createUser({
-      email: payload.email,
-      password: payload.password,
-      email_confirm: false 
-    });
+  async findUserById(userId: string): Promise<User | null> {
+    const { data, error } = await supabaseAdmin
+      .from('users')
+      .select('*')
+      .eq('id', userId)
+      .maybeSingle();
+
     if (error) throw new Error(error.message);
-    return data.user;
+    return data as User | null;
   },
 
-  async loginUser(payload: LoginPayload) {
-    const { data, error } = await supabaseAuthClient.auth.signInWithPassword({
-      email: payload.email,
-      password: payload.password
-    });
-    if (error) throw new Error(error.message);
-    return data;
+  async findUserByProviderOrEmail(
+    provider: string,
+    providerId: string,
+    email: string | null
+  ): Promise<User | null> {
+    const { data: byProvider, error: providerErr } = await supabaseAdmin
+      .from('users')
+      .select('*')
+      .eq('provider', provider)
+      .eq('provider_id', providerId)
+      .maybeSingle();
+
+    if (providerErr) {
+      console.warn('[Auth Repo Provider Lookup Warning]:', providerErr.message);
+    }
+    if (byProvider) return byProvider as User;
+
+    if (email) {
+      const { data: byEmail, error: emailErr } = await supabaseAdmin
+        .from('users')
+        .select('*')
+        .eq('email', email.toLowerCase())
+        .maybeSingle();
+
+      if (emailErr) throw new Error(emailErr.message);
+      if (byEmail) return byEmail as User;
+    }
+
+    return null;
   },
 
-  async updateUserTelemetry(userId: string, telemetry: ClientTelemetryData): Promise<void> {
+  async upsertSocialUser(
+    profile: SocialUserProfile,
+    mode: 'signin' | 'signup'
+  ): Promise<User> {
+    const nowIso = new Date().toISOString();
+    const normalizedEmail = profile.email
+      ? profile.email.toLowerCase()
+      : `${profile.provider}_${profile.providerId}@oauth.themavia.com`;
+
+    const existing = await this.findUserByProviderOrEmail(
+      profile.provider,
+      profile.providerId,
+      profile.email
+    );
+
+    if (existing) {
+      const updatePayload: Record<string, unknown> = {
+        provider: profile.provider,
+        provider_id: profile.providerId,
+        avatar_url: existing.avatar_url || profile.avatarUrl,
+        last_seen_at: nowIso,
+        updated_at: nowIso,
+      };
+
+      if (mode === 'signup') {
+        updatePayload.terms_accepted_at = nowIso;
+      }
+
+      const { data, error } = await supabaseAdmin
+        .from('users')
+        .update(updatePayload)
+        .eq('id', existing.id)
+        .select()
+        .single();
+
+      if (error) throw new Error(error.message);
+      return data as User;
+    }
+
+    const newUserId = randomUUID();
+    const cleanUsername =
+      profile.username
+        .replace(/[^a-zA-Z0-9_.-]/g, '')
+        .slice(0, 24) || `user_${newUserId.slice(0, 6)}`;
+
+    const { data: created, error: createErr } = await supabaseAdmin
+      .from('users')
+      .insert({
+        id: newUserId,
+        email: normalizedEmail,
+        username: cleanUsername,
+        avatar_url: profile.avatarUrl,
+        provider: profile.provider,
+        provider_id: profile.providerId,
+        role: 'BUYER',
+        status: 'ACTIVE',
+        terms_accepted_at: nowIso,
+        last_seen_at: nowIso,
+        created_at: nowIso,
+        updated_at: nowIso,
+      })
+      .select()
+      .single();
+
+    if (createErr) throw new Error(createErr.message);
+    return created as User;
+  },
+
+  async updateUserTelemetry(
+    userId: string,
+    telemetry: ClientTelemetryData
+  ): Promise<void> {
     const nowIso = new Date().toISOString();
     const { error } = await supabaseAdmin
       .from('users')
@@ -52,5 +135,24 @@ export const authRepo = {
     if (error) {
       console.warn('[Telemetry Repo Warning]:', error.message);
     }
+  },
+
+  async updateProfile(
+    userId: string,
+    payload: UpdateUserProfileInput
+  ): Promise<User> {
+    const { data, error } = await supabaseAdmin
+      .from('users')
+      .update({
+        username: payload.username,
+        avatar_url: payload.avatar_url,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', userId)
+      .select()
+      .single();
+
+    if (error) throw new Error(error.message);
+    return data as User;
   },
 };

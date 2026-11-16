@@ -114,7 +114,7 @@ export const productController = {
       );
       res.status(201).json({
         success: true,
-        message: 'Ulasan berhasil disimpan',
+        message: 'Review submitted successfully',
         data,
       });
     } catch (error: any) {

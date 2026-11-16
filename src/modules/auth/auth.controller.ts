@@ -2,61 +2,86 @@
 import { Request, Response } from 'express';
 import { authService } from './auth.service';
 import { inspectClientTelemetry } from '../../utils/clientTelemetry';
+import { SocialProvider } from '../../types/auth';
+
+const ALLOWED_PROVIDERS: SocialProvider[] = [
+  'google',
+  'facebook',
+  'x',
+  'discord',
+];
+
+const getFrontendBaseUrl = (): string =>
+  (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
 
 export const authController = {
-  async register(req: Request, res: Response): Promise<void> {
-    try {
-      const telemetry = await inspectClientTelemetry(req);
-      const data = await authService.register(req.body, telemetry);
-      res.status(201).json({ success: true, message: 'Registrasi berhasil', data });
-    } catch (error: any) {
-      res.status(400).json({ success: false, message: error.message });
-    }
-  },
-
-  async login(req: Request, res: Response): Promise<void> {
-    try {
-      const telemetry = await inspectClientTelemetry(req);
-      const data = await authService.login(req.body, telemetry);
-      res.status(200).json({ success: true, message: 'Login berhasil', data });
-    } catch (error: any) {
-      res.status(401).json({ success: false, message: error.message });
-    }
-  },
-
   async socialAuth(req: Request, res: Response): Promise<void> {
     try {
-      const { provider } = req.params; // 'google' atau 'twitter'
-      if (provider !== 'google' && provider !== 'twitter') {
-        res.status(400).json({ success: false, message: 'Provider tidak didukung' });
+      const provider = String(req.params.provider).toLowerCase() as SocialProvider;
+      if (!ALLOWED_PROVIDERS.includes(provider)) {
+        res
+          .status(400)
+          .json({ success: false, message: 'Unsupported authentication provider' });
         return;
       }
 
-      const url = await authService.getSocialAuthUrl(provider);
-      res.status(200).json({ success: true, url });
-    } catch (error: any) {
-      res.status(400).json({ success: false, message: error.message });
+      const mode = req.query.mode === 'signup' ? 'signup' : 'signin';
+      const url = authService.getSocialAuthUrl(provider, mode);
+
+      if (req.headers.accept?.includes('application/json')) {
+        res.status(200).json({ success: true, url });
+        return;
+      }
+
+      res.redirect(url);
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to initialize authentication';
+      res.status(400).json({ success: false, message });
     }
   },
 
   async socialCallback(req: Request, res: Response): Promise<void> {
-    try {
-      const { provider } = req.params;
-      const { code } = req.query;
+    const frontendUrl = getFrontendBaseUrl();
 
-      if (!code) {
-        res.redirect('https://www.themavia.com/login?error=NoCodeProvided');
+    try {
+      const provider = String(req.params.provider).toLowerCase() as SocialProvider;
+      if (!ALLOWED_PROVIDERS.includes(provider)) {
+        res.redirect(`${frontendUrl}/login?error=UnsupportedProvider`);
         return;
       }
 
-      const sessionData = await (authService as any).handleSocialCallback(String(code));
-      const accessToken = sessionData?.session?.access_token;
-      const refreshToken = sessionData?.session?.refresh_token;
+      const { code, state, error: oauthError } = req.query;
 
-      // Redirect mulus kembali ke frontend themavia.com
-      res.redirect(`https://www.themavia.com/auth/success?access_token=${accessToken}&refresh_token=${refreshToken}`);
-    } catch (error: any) {
-      res.redirect(`https://www.themavia.com/login?error=${encodeURIComponent(error.message)}`);
+      if (oauthError) {
+        res.redirect(
+          `${frontendUrl}/login?error=${encodeURIComponent(String(oauthError))}`
+        );
+        return;
+      }
+
+      if (!code || !state) {
+        res.redirect(`${frontendUrl}/login?error=MissingCodeOrState`);
+        return;
+      }
+
+      const telemetry = await inspectClientTelemetry(req);
+      const { token } = await authService.handleSocialCallback(
+        provider,
+        String(code),
+        String(state),
+        telemetry
+      );
+
+      res.redirect(
+        `${frontendUrl}/dashboard?token=${encodeURIComponent(token)}`
+      );
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : 'AuthenticationFailed';
+      res.redirect(
+        `${frontendUrl}/login?error=${encodeURIComponent(message)}`
+      );
     }
   },
 
@@ -69,51 +94,10 @@ export const authController = {
       }
       const data = await authService.getMe(userId);
       res.status(200).json({ success: true, data });
-    } catch (error: any) {
-      res.status(404).json({ success: false, message: error.message });
-    }
-  },
-
-  async signout(req: Request, res: Response): Promise<void> {
-    try {
-      const authHeader = req.headers.authorization;
-      const accessToken = authHeader?.startsWith('Bearer ')
-        ? authHeader.split(' ')[1]
-        : undefined;
-
-      await authService.signout(accessToken);
-      res.status(200).json({ success: true, message: 'Logout berhasil' });
-    } catch (error: any) {
-      console.warn('[Signout Controller Warning]:', error.message);
-      res.status(200).json({ success: true, message: 'Logout berhasil' });
-    }
-  },
-
-  async resetPassword(req: Request, res: Response): Promise<void> {
-    try {
-      const { email } = req.body;
-      if (!email) {
-        res.status(400).json({ success: false, message: 'Email wajib diisi' });
-        return;
-      }
-      await authService.resetPassword(email);
-      res.status(200).json({ success: true, message: 'Email reset password telah dikirim' });
-    } catch (error: any) {
-      res.status(400).json({ success: false, message: error.message });
-    }
-  },
-
-  async updatePassword(req: Request, res: Response): Promise<void> {
-    try {
-      const userId = req.userId;
-      if (!userId) {
-        res.status(401).json({ success: false, message: 'Unauthorized' });
-        return;
-      }
-      await authService.updatePassword(userId, req.body);
-      res.status(200).json({ success: true, message: 'Password berhasil diperbarui' });
-    } catch (error: any) {
-      res.status(400).json({ success: false, message: error.message });
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : 'User profile not found';
+      res.status(404).json({ success: false, message });
     }
   },
 
@@ -125,23 +109,17 @@ export const authController = {
         return;
       }
       const data = await authService.updateProfile(userId, req.body);
-      res.status(200).json({ success: true, message: 'Profil berhasil diperbarui', data });
-    } catch (error: any) {
-      res.status(400).json({ success: false, message: error.message });
+      res
+        .status(200)
+        .json({ success: true, message: 'Profile updated successfully', data });
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to update profile';
+      res.status(400).json({ success: false, message });
     }
   },
 
-  async confirmation(req: Request, res: Response): Promise<void> {
-    try {
-      const { token } = req.body;
-      if (!token) {
-        res.status(400).json({ success: false, message: 'Token wajib diisi' });
-        return;
-      }
-      await authService.confirmation(token);
-      res.status(200).json({ success: true, message: 'Konfirmasi sukses' });
-    } catch (error: any) {
-      res.status(400).json({ success: false, message: error.message });
-    }
-  }
+  async signout(_req: Request, res: Response): Promise<void> {
+    res.status(200).json({ success: true, message: 'Signed out successfully' });
+  },
 };

@@ -23,7 +23,7 @@ export const couponRepo = {
       .ilike('code', code.trim())
       .maybeSingle();
 
-    if (error) throw new Error(`Gagal memeriksa kupon: ${error.message}`);
+    if (error) throw new Error(`Failed to verify coupon: ${error.message}`);
     return data as CouponRecord | null;
   },
 

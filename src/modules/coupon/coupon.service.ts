@@ -5,7 +5,7 @@ export interface ValidateCouponResult {
   code: string;
   discount_type: 'PERCENTAGE' | 'FIXED';
   discount_value: number;
-  discountPercent: number; // Kompatibel langsung dengan state frontend
+  discountPercent: number; // Directly compatible with frontend state
   discountAmount: number;
   finalTotal: number;
   description?: string | null;
@@ -14,31 +14,31 @@ export interface ValidateCouponResult {
 export const couponService = {
   async validateAndCalculate(rawCode: string, subtotal: number = 0): Promise<ValidateCouponResult> {
     if (!rawCode || typeof rawCode !== 'string' || !rawCode.trim()) {
-      throw new Error('Masukkan kode kupon terlebih dahulu.');
+      throw new Error('Please enter a coupon code.');
     }
 
     const coupon = await couponRepo.findByCode(rawCode.trim());
     if (!coupon) {
-      throw new Error(`Kode kupon "${rawCode.toUpperCase()}" tidak ditemukan.`);
+      throw new Error(`Coupon code "${rawCode.toUpperCase()}" was not found.`);
     }
 
     if (!coupon.is_active) {
-      throw new Error('Kode kupon ini sudah tidak aktif.');
+      throw new Error('This coupon code is no longer active.');
     }
 
     if (coupon.expires_at && new Date(coupon.expires_at).getTime() < Date.now()) {
-      throw new Error('Kode kupon ini sudah kedaluwarsa.');
+      throw new Error('This coupon code has expired.');
     }
 
     if (coupon.usage_limit !== null && coupon.usage_limit !== undefined && coupon.used_count >= coupon.usage_limit) {
-      throw new Error('Kuota pemakaian kupon ini sudah habis.');
+      throw new Error('This coupon has reached its maximum usage limit.');
     }
 
     const numericSubtotal = Math.max(0, Number(subtotal) || 0);
     const minPurchase = Number(coupon.min_purchase || 0);
 
     if (numericSubtotal > 0 && numericSubtotal < minPurchase) {
-      throw new Error(`Minimal belanja untuk kupon ini adalah $${minPurchase}.`);
+      throw new Error(`Minimum purchase amount for this coupon is $${minPurchase}.`);
     }
 
     const discountValue = Number(coupon.discount_value);

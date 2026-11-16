@@ -3,17 +3,17 @@ import { supabaseAdmin } from '../../config/supabase';
 import { TransactionRecordPayload } from '../../types/payment';
 
 export const paymentRepo = {
-  // Menyimpan log transaksi pembayaran ke tabel database
+  // Save payment transaction log to database table
   async saveTransactionRecord(transactionData: TransactionRecordPayload): Promise<any> {
     const { data, error } = await supabaseAdmin
-      .from('transactions') // Pastikan tabel ini ada jika ingin mencatat log transaksi terpisah
+      .from('transactions')
       .insert([transactionData])
       .select()
       .single();
 
     if (error) {
-      // Jika tabel transactions belum dibuat di database, kita abaikan atau log saja agar tidak bikin crash
-      console.warn('Gagal menyimpan log transaksi ke tabel:', error.message);
+      // Ignore or log warning if optional transactions table does not exist yet
+      console.warn('Failed to save transaction log to table:', error.message);
       return null;
     }
     

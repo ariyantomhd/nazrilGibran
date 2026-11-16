@@ -19,7 +19,7 @@ export const cartService = {
     licenseType: LicenseType = 'regular'
   ): Promise<Cart> {
     if (!productId || quantity < 1) {
-      throw new Error('Produk dan kuantitas tidak valid');
+      throw new Error('Invalid product or quantity');
     }
 
     const cart = await this.getCart(userId);
@@ -35,7 +35,7 @@ export const cartService = {
     licenseType?: LicenseType
   ): Promise<Cart> {
     if (quantity < 1) {
-      throw new Error('Kuantitas minimal adalah 1');
+      throw new Error('Minimum quantity is 1');
     }
 
     await cartRepo.updateCartItem(itemId, quantity, withSupport, licenseType);

@@ -15,7 +15,7 @@ export const dashboardRepo = {
   },
 
   async getDashboardStats(userId: string): Promise<DashboardStats> {
-    // 1. Ambil data order untuk menghitung total_spent dan active_orders
+    // 1. Fetch orders to calculate total_spent and active_orders
     const { data: orders, error: ordersError } = await supabaseAdmin
       .from('orders')
       .select('grand_total, payment_status')
@@ -34,16 +34,16 @@ export const dashboardRepo = {
       }
     });
 
-    // 2. Hitung jumlah item produk yang bisa didownload (lisensi aktif)
+    // 2. Count downloadable items (active licenses)
     const { count: licenseCount, error: licenseError } = await supabaseAdmin
       .from('licenses')
       .select('*', { count: 'exact', head: true })
       .eq('buyer_id', userId)
       .eq('status', 'ACTIVE');
 
-    if (licenseError) console.warn('Gagal menghitung lisensi:', licenseError.message);
+    if (licenseError) console.warn('Failed to count active licenses:', licenseError.message);
 
-    // 3. Hitung wishlist
+    // 3. Count wishlist items
     let wishlist_count = 0;
     const { count: wishCount, error: wishError } = await supabaseAdmin
       .from('wishlists')
@@ -63,7 +63,7 @@ export const dashboardRepo = {
   },
 
   async getRecentOrders(userId: string): Promise<RecentOrder[]> {
-    // Ambil orders dan order_items tanpa nested join ke products
+    // Fetch orders and order_items without nested join to products
     const { data, error } = await supabaseAdmin
       .from('orders')
       .select('id, invoice_number, grand_total, payment_status, created_at, order_items(*)')
@@ -75,7 +75,7 @@ export const dashboardRepo = {
 
     const ordersList = data || [];
 
-    // Kumpulkan semua product_id unik dari order_items
+    // Collect all unique product_ids from order_items
     const productIds = Array.from(
       new Set(
         ordersList
@@ -85,7 +85,7 @@ export const dashboardRepo = {
       )
     );
 
-    // Ambil judul produk dari tabel products jika ada product_id
+    // Fetch product titles from the products table if product_ids exist
     const productTitleMap = new Map<string, string>();
     if (productIds.length > 0) {
       const { data: productsData, error: productsError } = await supabaseAdmin
@@ -107,7 +107,7 @@ export const dashboardRepo = {
         firstItem?.title ||
         firstItem?.product_name ||
         (firstItem?.product_id ? productTitleMap.get(firstItem.product_id) : null) ||
-        'Produk Digital Themavia';
+        'Themavia Digital Product';
 
       let mappedStatus: 'COMPLETED' | 'PENDING' | 'CANCELLED' = 'PENDING';
       if (ord.payment_status === 'PAID' || ord.payment_status === 'COMPLETED') {

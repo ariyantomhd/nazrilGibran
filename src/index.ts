@@ -28,14 +28,16 @@ app.set('trust proxy', 1);
 const allowedOrigins = [
   'https://themavia.com',
   'https://www.themavia.com',
+  'https://hub.themavia.com',
   'http://localhost:3000',
+  'http://localhost:5000',
 ];
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Izinkan request tanpa origin (seperti Postman, curl, atau server-to-server)
-      // dan origin yang terdaftar atau preview vercel.app
+      // Izinkan request tanpa origin (Postman, curl, server-to-server)
+      // dan origin terdaftar atau preview vercel.app
       if (
         !origin ||
         allowedOrigins.includes(origin) ||
@@ -55,7 +57,7 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Middleware untuk Mengatur Security Headers (Termasuk CSP yang mengizinkan Cloudflare Insights)
+// Middleware untuk Mengatur Security Headers (Termasuk CSP untuk Social Auth, PayPal, & Supabase)
 app.use((req, res, next) => {
   res.setHeader(
     'Content-Security-Policy',
@@ -64,7 +66,7 @@ app.use((req, res, next) => {
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
     "font-src 'self' https://fonts.gstatic.com; " +
     "img-src 'self' blob: data: https:; " +
-    "connect-src 'self' http://localhost:5000 https://*.supabase.co https://*.paypal.com;"
+    "connect-src 'self' http://localhost:5000 https://hub.themavia.com https://*.supabase.co https://*.paypal.com https://*.googleapis.com https://*.facebook.com https://*.twitter.com https://*.discord.com;"
   );
   next();
 });

@@ -103,7 +103,7 @@ export const dealsRepo = {
       .order('created_at', { ascending: false });
 
     if (error) {
-      throw new Error(`Gagal mengambil data deals dari database: ${error.message}`);
+      throw new Error(`Failed to fetch deals from database: ${error.message}`);
     }
 
     const rows = (data || []) as unknown as RawDealRow[];
@@ -154,11 +154,11 @@ export const dealsRepo = {
         };
       });
 
-    // Pilih 1 deal unggulan (diskon terbesar / flash sale aktif) untuk Hero Banner
+    // Pick 1 featured deal (highest discount / active flash sale) for Hero Banner
     const featuredDeal =
       [...allMappedDeals].sort((a, b) => b.discount_percent - a.discount_percent)[0] || null;
 
-    // Terapkan filter di sisi server
+    // Apply server-side filters
     let filtered = allMappedDeals.filter((item) => {
       if (filters.flashSaleOnly && !item.is_flash_sale) {
         return false;
@@ -194,7 +194,7 @@ export const dealsRepo = {
       return true;
     });
 
-    // Terapkan sorting di sisi server
+    // Apply server-side sorting
     if (filters.sortBy === 'lowest') {
       filtered = filtered.sort((a, b) => a.discount_price - b.discount_price);
     } else if (filters.sortBy === 'highest') {

@@ -43,10 +43,10 @@ type PreparedOrderItem = Omit<OrderItem, 'id' | 'order_id' | 'created_at'> & {
 export const orderService = {
   async createOrder(buyerId: string, input: CreateOrderInput): Promise<Order> {
     if (!input.items || input.items.length === 0) {
-      throw new Error('Item pesanan tidak boleh kosong.');
+      throw new Error('Order items cannot be empty.');
     }
 
-    // 1. Ambil harga asli dari database sebagai Single Source of Truth
+    // 1. Fetch actual prices from database as Single Source of Truth
     const productIds = Array.from(new Set(input.items.map((item) => item.product_id)));
     const { data: products, error: prodError } = await supabaseAdmin
       .from('products')
@@ -54,7 +54,7 @@ export const orderService = {
       .in('id', productIds);
 
     if (prodError || !products) {
-      throw new Error('Gagal memverifikasi data harga produk dari server.');
+      throw new Error('Failed to verify product pricing from the server.');
     }
 
     const productMap = new Map<string, VerifiedProductRow>();
@@ -66,7 +66,7 @@ export const orderService = {
     for (const item of input.items) {
       const dbProduct = productMap.get(String(item.product_id));
       if (!dbProduct) {
-        throw new Error(`Produk dengan ID ${item.product_id} tidak ditemukan.`);
+        throw new Error(`Product with ID ${item.product_id} was not found.`);
       }
 
       const qty = Math.max(1, Number(item.quantity || 1));
@@ -88,7 +88,7 @@ export const orderService = {
       const feePercentage = item.seller_fee_percentage || 10;
       const resolvedLicense: LicenseType = (isExtended ? 'EXTENDED' : 'REGULAR') as LicenseType;
 
-      // Expand berdasarkan quantity agar setiap unit mendapat lisensi masing-masing
+      // Expand based on quantity so each unit receives its own individual license
       for (let i = 0; i < qty; i++) {
         const singleUnitPrice = Number((baseUnitPrice + unitSupportPrice).toFixed(2));
         const singleFee = Number(((singleUnitPrice * feePercentage) / 100).toFixed(2));
@@ -108,7 +108,7 @@ export const orderService = {
 
     verifiedSubtotal = Number(verifiedSubtotal.toFixed(2));
 
-    // 2. Validasi kupon & hitung diskon langsung di server jika coupon_code disertakan
+    // 2. Validate coupon & calculate discount directly on the server if coupon_code is provided
     let verifiedDiscount = 0;
     let verifiedGrandTotal = verifiedSubtotal;
     let appliedCouponCode: string | null = null;
@@ -132,7 +132,7 @@ export const orderService = {
     const randomStr = Math.random().toString(36).substring(2, 6).toUpperCase();
     const invoiceNumber = `INV-${dateStr}-${randomStr}`;
 
-    // 4. Simpan Order utama ke database
+    // 4. Save main Order to database
     const orderData: Omit<Order, 'id' | 'created_at' | 'updated_at' | 'order_items'> & {
       coupon_code: string | null;
     } = {
@@ -152,14 +152,14 @@ export const orderService = {
 
     const newOrder = await orderRepo.createOrder(orderData);
 
-    // 5. Simpan Order Items
+    // 5. Save Order Items
     const itemsWithOrderId: Omit<OrderItem, 'id' | 'created_at'>[] = preparedOrderItems.map((row) => ({
       ...row,
       order_id: newOrder.id,
     }));
     await orderRepo.createOrderItems(itemsWithOrderId);
 
-    // 6. Tandai kupon terpakai
+    // 6. Mark coupon as used
     if (appliedCouponCode) {
       await couponService.markCouponAsUsed(appliedCouponCode);
     }
@@ -169,7 +169,7 @@ export const orderService = {
 
   async getOrderById(buyerId: string, orderId: string): Promise<Order> {
     const order = await orderRepo.getOrderById(orderId, buyerId);
-    if (!order) throw new Error('Order tidak ditemukan atau Anda tidak memiliki akses');
+    if (!order) throw new Error('Order not found or you do not have access');
     return order;
   },
 

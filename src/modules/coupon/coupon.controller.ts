@@ -10,7 +10,7 @@ export const couponController = {
 
       res.status(200).json({
         success: true,
-        message: `Kupon ${result.code} berhasil diterapkan!`,
+        message: `Coupon ${result.code} applied successfully!`,
         discountPercent: result.discountPercent,
         discountAmount: result.discountAmount,
         data: result,
@@ -18,7 +18,7 @@ export const couponController = {
     } catch (error: any) {
       res.status(400).json({
         success: false,
-        message: error.message || 'Kode kupon tidak valid',
+        message: error.message || 'Invalid coupon code',
       });
     }
   },

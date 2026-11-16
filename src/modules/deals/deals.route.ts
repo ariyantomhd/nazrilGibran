@@ -4,7 +4,7 @@ import { dealsController } from './deals.controller';
 
 const router = Router();
 
-// Endpoint publik untuk halaman /deals
+// Public endpoint for the /deals page
 router.get('/', dealsController.getDeals);
 
 export default router;

@@ -12,7 +12,7 @@ export const licenseController = {
       const data = await licenseService.getMyLicenses(req.userId!);
       res.status(200).json({ success: true, data });
     } catch (error: unknown) {
-      let message = 'Terjadi kesalahan saat mengambil data lisensi.';
+      let message = 'An error occurred while fetching licenses.';
       if (error instanceof Error) {
         message = error.message;
       } else if (typeof error === 'object' && error !== null) {
@@ -27,9 +27,9 @@ export const licenseController = {
     try {
       const licenseId = req.params.licenseId as string;
       const data = await licenseService.getDownloadUrl(req.userId!, licenseId);
-      res.status(200).json({ success: true, message: 'Tautan unduhan berhasil dibuat', data });
+      res.status(200).json({ success: true, message: 'Download link generated successfully', data });
     } catch (error: unknown) {
-      let message = 'Gagal membuat tautan unduhan.';
+      let message = 'Failed to generate download link.';
       if (error instanceof Error) {
         message = error.message;
       } else if (typeof error === 'object' && error !== null) {

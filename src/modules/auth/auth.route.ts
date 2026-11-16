@@ -5,19 +5,13 @@ import { verifyAuth } from '../../middlewares/auth.middleware';
 
 const router = Router();
 
-// Endpoint Publik
-router.post('/register', authController.register);
-router.post('/login', authController.login);
-router.post('/reset-password', authController.resetPassword);
-router.post('/confirmation', authController.confirmation);
-router.post('/signout', authController.signout);
-
-// Endpoint Privat
+// Private Endpoints (Must be placed above the /:provider wildcard)
+router.get('/me', verifyAuth, authController.getProfile);
 router.get('/profile', verifyAuth, authController.getProfile);
 router.put('/profile', verifyAuth, authController.updateProfile);
-router.put('/password', verifyAuth, authController.updatePassword);
+router.post('/signout', authController.signout);
 
-// Endpoint Social Auth & Callback (Wajib di bawah route spesifik agar tidak bentrok)
+// Social OAuth & Callback Endpoints (Google, Facebook, X, Discord)
 router.get('/:provider/callback', authController.socialCallback);
 router.get('/:provider', authController.socialAuth);
 

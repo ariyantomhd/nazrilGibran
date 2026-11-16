@@ -1,149 +1,128 @@
 // src/modules/auth/auth.service.ts
+import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
 import { authRepo } from './auth.repo';
-import { RegisterPayload, LoginPayload, UpdateUserProfileInput, UpdateUserPasswordInput } from '../../types/auth';
-import { supabaseAdmin } from '../../config/supabase';
-import { sendVerificationEmail } from '../../utils/email/verify';
+import { socialProviders } from './providers';
+import { SocialProvider, UpdateUserProfileInput } from '../../types/auth';
 import { ClientTelemetryData } from '../../utils/clientTelemetry';
-import { createClient } from '@supabase/supabase-js';
 
-const clientForAuth = createClient(
-  process.env.SUPABASE_URL || '',
-  process.env.SUPABASE_PUBLISHABLE_KEY || ''
-);
+interface OAuthStatePayload {
+  provider: SocialProvider;
+  mode: 'signin' | 'signup';
+  codeVerifier?: string;
+  exp: number;
+}
+
+const getJwtSecret = (): string => {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error('JWT_SECRET is not configured in .env');
+  return secret;
+};
+
+function signOAuthState(payload: OAuthStatePayload): string {
+  const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = crypto
+    .createHmac('sha256', getJwtSecret())
+    .update(encoded)
+    .digest('base64url');
+  return `${encoded}.${signature}`;
+}
+
+function verifyOAuthState(stateToken: string): OAuthStatePayload {
+  const [encoded, signature] = stateToken.split('.');
+  if (!encoded || !signature) throw new Error('Invalid OAuth state parameter');
+
+  const expectedSig = crypto
+    .createHmac('sha256', getJwtSecret())
+    .update(encoded)
+    .digest('base64url');
+
+  if (signature !== expectedSig) {
+    throw new Error('OAuth state signature mismatch');
+  }
+
+  const parsed = JSON.parse(
+    Buffer.from(encoded, 'base64url').toString('utf8')
+  ) as OAuthStatePayload;
+
+  if (Date.now() > parsed.exp) {
+    throw new Error('OAuth session expired, please try again');
+  }
+
+  return parsed;
+}
+
+function generatePkcePair() {
+  const codeVerifier = crypto.randomBytes(32).toString('base64url');
+  const codeChallenge = crypto
+    .createHash('sha256')
+    .update(codeVerifier)
+    .digest('base64url');
+  return { codeVerifier, codeChallenge };
+}
 
 export const authService = {
-  async register(payload: RegisterPayload, telemetry?: ClientTelemetryData) {
-    const user = await authRepo.registerUser(payload);
-    if (!user) throw new Error('Gagal mendaftarkan user');
+  getSocialAuthUrl(
+    provider: SocialProvider,
+    mode: 'signin' | 'signup' = 'signin'
+  ): string {
+    const exp = Date.now() + 10 * 60 * 1000;
+
+    if (provider === 'x') {
+      const { codeVerifier, codeChallenge } = generatePkcePair();
+      const state = signOAuthState({ provider, mode, codeVerifier, exp });
+      return socialProviders.buildAuthorizeUrl(provider, state, codeChallenge);
+    }
+
+    const state = signOAuthState({ provider, mode, exp });
+    return socialProviders.buildAuthorizeUrl(provider, state);
+  },
+
+  async handleSocialCallback(
+    provider: SocialProvider,
+    code: string,
+    rawState: string,
+    telemetry?: ClientTelemetryData
+  ) {
+    const stateData = verifyOAuthState(rawState);
+    if (stateData.provider !== provider) {
+      throw new Error('Provider state mismatch');
+    }
+
+    const profile = await socialProviders.fetchProfile(
+      provider,
+      code,
+      stateData.codeVerifier
+    );
+
+    const user = await authRepo.upsertSocialUser(profile, stateData.mode);
 
     if (telemetry && user.id) {
       await authRepo.updateUserTelemetry(user.id, telemetry);
     }
 
-    const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
-      type: 'signup',
-      email: payload.email,
-      password: payload.password
-    });
-
-    if (linkError || !linkData) {
-      console.warn('[GenerateLink Warning]:', linkError?.message);
-    }
-
-    const confirmationUrl = linkData?.properties?.action_link || `${process.env.FRONTEND_URL || 'https://www.themavia.com'}/verify?token=${user.id}`;
-
-    sendVerificationEmail(payload.email, confirmationUrl)
-      .then(() => {
-        console.log('✨ [SMTP Success]: Email konfirmasi berhasil dikirim ke:', payload.email);
-      })
-      .catch((emailError: any) => {
-        console.warn('⚠️ [SMTP Warning]: Gagal mengirim email otomatis ->', emailError.message);
-        console.log('🔗 Link Verifikasi Manual (Gunakan ini untuk testing):', confirmationUrl);
-      });
-
-    return user;
-  },
-
-  async login(payload: LoginPayload, telemetry?: ClientTelemetryData) {
-    const authData = await authRepo.loginUser(payload);
-    const userId = authData?.user?.id;
-
-    if (telemetry && userId) {
-      await authRepo.updateUserTelemetry(userId, telemetry);
-    }
-
-    return authData;
-  },
-
-  async getSocialAuthUrl(provider: 'google' | 'twitter') {
-    const { data, error } = await clientForAuth.auth.signInWithOAuth({
-      provider,
-      options: {
-        redirectTo: `https://pgxslsiwddoqcztfnakq.supabase.co/auth/v1/callback`,
-        skipBrowserRedirect: true,
+    const token = jwt.sign(
+      {
+        sub: user.id,
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+        provider: user.provider,
       },
-    });
+      getJwtSecret(),
+      { expiresIn: '7d' }
+    );
 
-    if (error) throw new Error(error.message);
-    if (!data?.url) throw new Error(`Gagal mendapatkan URL ${provider} Auth`);
-
-    return data.url;
-  },
-
-  async handleSocialCallback(code: string) {
-    const { data, error } = await clientForAuth.auth.exchangeCodeForSession(code);
-    if (error) throw new Error(error.message);
-    return data;
+    return { user, token };
   },
 
   async getMe(userId: string) {
-    const { data, error } = await supabaseAdmin
-      .from('users')
-      .select('*')
-      .eq('id', userId)
-      .single();
-    
-    if (error) throw new Error('User profile not found');
-    return data;
-  },
-
-  async signout(accessToken?: string) {
-    if (accessToken && accessToken.split('.').length === 3) {
-      const { error } = await supabaseAdmin.auth.admin.signOut(accessToken);
-      if (error) {
-        console.warn('[Supabase Signout Info]:', error.message);
-      }
-    }
-    return true;
-  },
-
-  async resetPassword(email: string) {
-    const { error } = await supabaseAdmin.auth.resetPasswordForEmail(email);
-    if (error) throw new Error(error.message);
-    return true;
-  },
-
-  async updatePassword(userId: string, payload: UpdateUserPasswordInput) {
-    const { error } = await supabaseAdmin.auth.admin.updateUserById(userId, {
-      password: payload.new_password
-    });
-    if (error) throw new Error(error.message);
-    return true;
+    const user = await authRepo.findUserById(userId);
+    if (!user) throw new Error('User profile not found');
+    return user;
   },
 
   async updateProfile(userId: string, payload: UpdateUserProfileInput) {
-    const { data, error } = await supabaseAdmin
-      .from('users')
-      .update({ 
-        username: payload.username, 
-        avatar_url: payload.avatar_url,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', userId)
-      .select()
-      .single();
-      
-    if (error) throw new Error(error.message);
-    return data;
+    return authRepo.updateProfile(userId, payload);
   },
-
-  async confirmation(token: string) {
-    const { data, error } = await supabaseAdmin.auth.verifyOtp({
-      token_hash: token,
-      type: 'email'
-    });
-    if (error || !data.user) throw new Error('Invalid or expired confirmation token');
-
-    const { error: updateError } = await supabaseAdmin
-      .from('users')
-      .update({ 
-        status: 'ACTIVE', 
-        updated_at: new Date().toISOString() 
-      })
-      .eq('id', data.user.id);
-
-    if (updateError) throw new Error(updateError.message);
-
-    return true;
-  }
 };

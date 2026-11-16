@@ -3,36 +3,44 @@ import { licenseRepo } from './license.repo';
 import { supabaseAdmin } from '../../config/supabase';
 import { License } from '../../types/order';
 
-// Definisikan tipe strict untuk item order yang masuk saat generate lisensi
 interface OrderItemForLicense {
   id: string;
   product_id: string;
   license_type?: string;
 }
 
-// Definisikan tipe strict untuk produk berelasi pada tabel licenses
 interface ProductRelation {
-  file_path?: string;
+  id?: string;
+  file_source_url?: string | null;
+  file_path?: string | null;
+  download_url?: string | null;
   title?: string;
+  name?: string;
 }
 
 interface LicenseWithProduct extends License {
   products?: ProductRelation;
+  order_items?: {
+    products?: ProductRelation;
+  };
 }
 
 export const licenseService = {
-  // Dipanggil otomatis oleh payment service ketika capture PayPal COMPLETED
-  async generateLicensesForOrder(orderId: string, buyerId: string, orderItems: OrderItemForLicense[]): Promise<void> {
-    const licenseEntries = orderItems.map(item => {
-      // Buat format license key acak yang elegan (Contoh: TMV-A8F2-9B1C-4E7D)
-      const randomKey = Array.from({ length: 3 }, () => 
+  async generateLicensesForOrder(
+    _orderId: string,
+    buyerId: string,
+    orderItems: OrderItemForLicense[]
+  ): Promise<void> {
+    const licenseEntries = orderItems.map((item) => {
+      const randomKey = Array.from({ length: 3 }, () =>
         Math.random().toString(36).substring(2, 6).toUpperCase()
       ).join('-');
       const licenseKey = `TMV-${randomKey}`;
 
-      // Normalisasi wajib ke lowercase agar cocok dengan enum PostgreSQL ('regular' / 'extended')
       const rawLicense = item.license_type || 'regular';
-      const normalizedLicenseType = (rawLicense.toLowerCase() === 'extended' ? 'extended' : 'regular') as License['license_type'];
+      const normalizedLicenseType = (
+        rawLicense.toLowerCase() === 'extended' ? 'extended' : 'regular'
+      ) as License['license_type'];
 
       return {
         license_key: licenseKey,
@@ -42,7 +50,7 @@ export const licenseService = {
         license_type: normalizedLicenseType,
         activated_domains: [],
         activation_count: 0,
-        status: 'ACTIVE' as const // Menggunakan string literal langsung untuk menghindari error type-only
+        status: 'ACTIVE' as const,
       };
     });
 
@@ -53,31 +61,58 @@ export const licenseService = {
     return await licenseRepo.getLicensesByBuyer(buyerId);
   },
 
-  // Generate Signed URL untuk download file aset digital secara aman (Expired dalam 1 jam)
-  async getDownloadUrl(buyerId: string, licenseId: string): Promise<{ download_url: string; file_name: string }> {
+  async getDownloadUrl(
+    buyerId: string,
+    licenseId: string
+  ): Promise<{ download_url: string; file_name: string; license_key: string }> {
     const license = await licenseRepo.getLicenseById(licenseId, buyerId);
-    if (!license) throw new Error('Lisensi tidak ditemukan atau Anda tidak memiliki akses');
-
-    // Casting ke tipe data strict tanpa menggunakan 'any'
-    const typedLicense = license as unknown as LicenseWithProduct;
-    const product = typedLicense.products;
-    
-    if (!product || !product.file_path) {
-      throw new Error('File produk untuk unduhan tidak ditemukan di server');
+    if (!license) {
+      throw new Error('License not found or you do not have access');
     }
 
-    // Buat Signed URL dari Supabase Storage (Berlaku selama 3600 detik / 1 jam)
+    if (license.status !== 'ACTIVE') {
+      throw new Error('Your license is currently inactive or suspended');
+    }
+
+    const typedLicense = license as unknown as LicenseWithProduct;
+    const product = typedLicense.products || typedLicense.order_items?.products;
+
+    const rawPath =
+      product?.file_source_url || product?.file_path || product?.download_url;
+    const productTitle = product?.title || product?.name || 'themavia-product';
+    const fileName = `${productTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.zip`;
+
+    if (!rawPath) {
+      throw new Error('Product ZIP file has not been uploaded by the seller/admin');
+    }
+
+    // Return directly if file_source_url is already a full external URL
+    if (rawPath.startsWith('http://') || rawPath.startsWith('https://')) {
+      return {
+        download_url: rawPath,
+        file_name: fileName,
+        license_key: license.license_key,
+      };
+    }
+
+    // Generate Signed URL from Supabase Storage bucket 'product-files' (valid for 1 hour)
+    const cleanStoragePath = rawPath.replace(/^product-files\//, '');
     const { data, error } = await supabaseAdmin.storage
-      .from('product-files') // Nama bucket storage Supabase
-      .createSignedUrl(product.file_path, 3600);
+      .from('product-files')
+      .createSignedUrl(cleanStoragePath, 3600, {
+        download: fileName,
+      });
 
     if (error || !data) {
-      throw new Error(`Gagal membuat tautan unduhan: ${error?.message || 'Unknown error'}`);
+      throw new Error(
+        `Failed to generate download link: ${error?.message || 'File not found in storage bucket'}`
+      );
     }
 
     return {
       download_url: data.signedUrl,
-      file_name: product.title ? `${product.title.toLowerCase().replace(/\s+/g, '-')}.zip` : 'download.zip'
+      file_name: fileName,
+      license_key: license.license_key,
     };
-  }
+  },
 };

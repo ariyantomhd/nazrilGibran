@@ -33,12 +33,12 @@ export const productRepo = {
 
     query = query.eq('status', 'PUBLISHED');
 
-    // 1. Filter menggunakan category_id (UUID mutlak)
+    // 1. Filter using category_id (UUID)
     if (params.category_id) {
       query = query.eq('category_id', params.category_id);
     }
     
-    // 2. Filter menggunakan slug kategori dari Frontend (?category=mobile-apps)
+    // 2. Filter using category slug from Frontend (?category=mobile-apps)
     const categorySlug = (params as any).category;
     if (categorySlug) {
       const { data: catData } = await supabaseAdmin
@@ -54,7 +54,7 @@ export const productRepo = {
       }
     }
 
-    // 3. Filter Section Halaman Utama
+    // 3. Filter Homepage Sections
     if (params.is_featured === 'true' || params.is_featured === true) query = query.eq('is_featured', true);
     if (params.is_popular === 'true' || params.is_popular === true) query = query.eq('is_popular', true);
     if (params.is_flash_sale === 'true' || params.is_flash_sale === true) query = query.eq('is_flash_sale', true);
@@ -74,7 +74,7 @@ export const productRepo = {
     query = query.limit(limit);
 
     const { data, error } = await query;
-    if (error) throw new Error(`Gagal mengambil produk: ${error.message}`);
+    if (error) throw new Error(`Failed to fetch products: ${error.message}`);
     return data as Product[];
   },
 
@@ -86,7 +86,7 @@ export const productRepo = {
       .eq('status', 'PUBLISHED')
       .single();
 
-    if (error) throw new Error('Produk tidak ditemukan');
+    if (error) throw new Error('Product not found');
     return data as Product;
   },
 
@@ -118,7 +118,7 @@ export const productRepo = {
       .select('id', { count: 'exact', head: true })
       .eq('product_id', productId);
 
-    if (error) throw new Error(`Gagal mengambil data likes: ${error.message}`);
+    if (error) throw new Error(`Failed to fetch product likes: ${error.message}`);
 
     let isLiked = false;
     if (userId) {
@@ -146,7 +146,7 @@ export const productRepo = {
       .eq('user_id', userId)
       .maybeSingle();
 
-    if (checkError) throw new Error(`Gagal memeriksa status like: ${checkError.message}`);
+    if (checkError) throw new Error(`Failed to check like status: ${checkError.message}`);
 
     if (existingLike) {
       const { error: deleteError } = await supabaseAdmin
@@ -154,7 +154,7 @@ export const productRepo = {
         .delete()
         .eq('id', existingLike.id);
 
-      if (deleteError) throw new Error(`Gagal membatalkan like: ${deleteError.message}`);
+      if (deleteError) throw new Error(`Failed to remove like: ${deleteError.message}`);
     } else {
       const { error: insertError } = await supabaseAdmin
         .from('product_likes')
@@ -163,7 +163,7 @@ export const productRepo = {
           user_id: userId,
         });
 
-      if (insertError) throw new Error(`Gagal menyukai produk: ${insertError.message}`);
+      if (insertError) throw new Error(`Failed to like product: ${insertError.message}`);
     }
 
     return await this.getProductLikes(productId, userId);
@@ -177,7 +177,7 @@ export const productRepo = {
       .eq('product_id', productId)
       .order('created_at', { ascending: false });
 
-    if (error) throw new Error(`Gagal mengambil ulasan produk: ${error.message}`);
+    if (error) throw new Error(`Failed to fetch product reviews: ${error.message}`);
 
     const rows = rawReviews ?? [];
     const buyerIds = Array.from(new Set(rows.map((r: any) => r.buyer_id).filter(Boolean)));
@@ -235,7 +235,7 @@ export const productRepo = {
     rating: number,
     comment: string,
   ): Promise<ProductReviewItem> {
-    // 1. Cek apakah pembeli benar-benar pernah membeli produk ini (Verified Purchase)
+    // 1. Verify if the buyer actually purchased this product (Verified Purchase)
     let isVerifiedPurchase = false;
     const { data: userOrders } = await supabaseAdmin
       .from('orders')
@@ -258,7 +258,7 @@ export const productRepo = {
       isVerifiedPurchase = Boolean(purchasedItem);
     }
 
-    // 2. Cek apakah user sudah pernah menulis ulasan pada produk ini (jika ada -> update, jika belum -> insert)
+    // 2. Check if user has already reviewed this product (update if exists, insert if new)
     const { data: existingReview } = await supabaseAdmin
       .from('product_reviews')
       .select('id')
@@ -280,7 +280,7 @@ export const productRepo = {
         .select('*')
         .single();
 
-      if (error) throw new Error(`Gagal memperbarui ulasan: ${error.message}`);
+      if (error) throw new Error(`Failed to update review: ${error.message}`);
       savedRow = data;
     } else {
       const { data, error } = await supabaseAdmin
@@ -296,11 +296,11 @@ export const productRepo = {
         .select('*')
         .single();
 
-      if (error) throw new Error(`Gagal mengirim ulasan: ${error.message}`);
+      if (error) throw new Error(`Failed to submit review: ${error.message}`);
       savedRow = data;
     }
 
-    // 3. Ambil profil user untuk dikembalikan ke frontend
+    // 3. Fetch user profile to return to frontend
     const { data: userData } = await supabaseAdmin
       .from('users')
       .select('*')

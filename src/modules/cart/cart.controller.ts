@@ -32,7 +32,7 @@ export const cartController = {
         Boolean(withSupport),
         normalizedLicense
       );
-      res.status(200).json({ success: true, message: 'Item ditambahkan ke keranjang', data });
+      res.status(200).json({ success: true, message: 'Item added to cart', data });
     } catch (error: any) {
       res.status(400).json({ success: false, message: error.message });
     }
@@ -52,7 +52,7 @@ export const cartController = {
         withSupport,
         normalizedLicense
       );
-      res.status(200).json({ success: true, message: 'Keranjang diperbarui', data });
+      res.status(200).json({ success: true, message: 'Cart updated', data });
     } catch (error: any) {
       res.status(400).json({ success: false, message: error.message });
     }
@@ -62,7 +62,7 @@ export const cartController = {
     try {
       const itemId = (req as any).params.itemId as string;
       const data = await cartService.removeCartItem(req.userId!, itemId);
-      res.status(200).json({ success: true, message: 'Item dihapus dari keranjang', data });
+      res.status(200).json({ success: true, message: 'Item removed from cart', data });
     } catch (error: any) {
       res.status(400).json({ success: false, message: error.message });
     }
@@ -71,7 +71,7 @@ export const cartController = {
   async clearCart(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
       const data = await cartService.clearCart(req.userId!);
-      res.status(200).json({ success: true, message: 'Keranjang dikosongkan', data });
+      res.status(200).json({ success: true, message: 'Cart cleared', data });
     } catch (error: any) {
       res.status(400).json({ success: false, message: error.message });
     }

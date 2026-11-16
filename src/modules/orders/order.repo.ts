@@ -3,7 +3,7 @@ import { Order, OrderItem } from '../../types/order';
 import { OrderStatus } from '../../types/enums';
 
 export const orderRepo = {
-  // 1. Insert ke tabel orders
+  // 1. Insert into orders table
   async createOrder(orderData: Omit<Order, 'id' | 'created_at' | 'updated_at' | 'order_items'>): Promise<Order> {
     const { data, error } = await supabaseAdmin
       .from('orders')
@@ -11,22 +11,22 @@ export const orderRepo = {
       .select()
       .single();
 
-    if (error) throw new Error(`Gagal membuat order: ${error.message}`);
+    if (error) throw new Error(`Failed to create order: ${error.message}`);
     return data as Order;
   },
 
-  // 2. Insert ke tabel order_items (Bulk insert)
+  // 2. Insert into order_items table (Bulk insert)
   async createOrderItems(itemsData: Omit<OrderItem, 'id' | 'created_at'>[]): Promise<OrderItem[]> {
     const { data, error } = await supabaseAdmin
       .from('order_items')
       .insert(itemsData)
       .select();
 
-    if (error) throw new Error(`Gagal membuat detail order: ${error.message}`);
+    if (error) throw new Error(`Failed to create order items: ${error.message}`);
     return data as OrderItem[];
   },
 
-  // 3. Ambil detail order berdasarkan ID dan Buyer (Keamanan agar tidak bisa akses invoice orang lain)
+  // 3. Fetch order details by ID and Buyer (Ensures users cannot access others' invoices)
   async getOrderById(orderId: string, buyerId: string): Promise<Order | null> {
     const { data, error } = await supabaseAdmin
       .from('orders')
@@ -39,7 +39,7 @@ export const orderRepo = {
     return data as Order | null;
   },
 
-  // 4. Ambil semua riwayat order milik user
+  // 4. Fetch all order history for the user
   async getOrdersByBuyerId(buyerId: string): Promise<Order[]> {
     const { data, error } = await supabaseAdmin
       .from('orders')
@@ -51,7 +51,7 @@ export const orderRepo = {
     return data as Order[];
   },
 
-  // 5. Update status setelah pembayaran PayPal berhasil
+  // 5. Update status after PayPal payment succeeds
   async updatePaymentStatus(orderId: string, status: OrderStatus, paypalTxId?: string): Promise<void> {
     const updateData: Partial<Order> = { payment_status: status };
     if (paypalTxId) updateData.paypal_transaction_id = paypalTxId;
@@ -61,6 +61,6 @@ export const orderRepo = {
       .update(updateData)
       .eq('id', orderId);
 
-    if (error) throw new Error(`Gagal update status order: ${error.message}`);
+    if (error) throw new Error(`Failed to update order status: ${error.message}`);
   }
 };

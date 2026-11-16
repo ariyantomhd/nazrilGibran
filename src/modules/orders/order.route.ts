@@ -4,7 +4,7 @@ import { verifyAuth } from '../../middlewares/auth.middleware';
 
 const router = Router();
 
-// Terapkan perlindungan Auth untuk semua endpoint order
+// Apply Auth protection to all order endpoints
 router.use(verifyAuth);
 
 router.post('/', orderController.createOrder);
