@@ -1,18 +1,27 @@
-import { Request, Response } from 'express';
-import { publicBlogRepo } from './blog.repository';
+// src/modules/blog/blog.controller.ts
+import { Request, Response, NextFunction } from 'express';
+import { blogService } from './blog.service';
+
+function sanitizeText(input: unknown, maxLength: number): string {
+  return String(input ?? '')
+    .replace(/<[^>]*>/g, '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+}
 
 export const publicBlogController = {
-  async getCategories(_req: Request, res: Response): Promise<void> {
+  async getCategories(_req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const data = await publicBlogRepo.listCategories();
+      const data = await blogService.getCategories();
       res.status(200).json({ success: true, data });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to load categories';
-      res.status(500).json({ success: false, message });
+    } catch (err) {
+      next(err);
     }
   },
 
-  async getArticles(req: Request, res: Response): Promise<void> {
+  async getArticles(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const category_id =
         typeof req.query.category_id === 'string' ? req.query.category_id : undefined;
@@ -20,63 +29,58 @@ export const publicBlogController = {
         typeof req.query.category === 'string' ? req.query.category : undefined;
       const search = typeof req.query.search === 'string' ? req.query.search : undefined;
 
-      const data = await publicBlogRepo.listPublishedArticles({
+      const data = await blogService.getArticles({
         category_id,
         category,
         search,
       });
       res.status(200).json({ success: true, data });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to load articles';
-      res.status(500).json({ success: false, message });
+    } catch (err) {
+      next(err);
     }
   },
 
-  async getArticleDetail(req: Request, res: Response): Promise<void> {
+  async getArticleDetail(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const slug = String(req.params.slug || '');
-      const article = await publicBlogRepo.getArticleBySlug(slug);
+      const article = await blogService.getArticleDetail(slug);
       if (!article) {
         res.status(404).json({ success: false, message: 'Article not found' });
         return;
       }
       res.status(200).json({ success: true, data: article });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to load article';
-      res.status(500).json({ success: false, message });
+    } catch (err) {
+      next(err);
     }
   },
 
-  async postComment(req: Request, res: Response): Promise<void> {
+  async postComment(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const articleId = Number(req.params.articleId);
-      if (Number.isNaN(articleId) || articleId <= 0) {
+      if (!Number.isInteger(articleId) || articleId <= 0) {
         res.status(400).json({ success: false, message: 'Invalid article ID' });
         return;
       }
 
-      const rawName = String(req.body?.author_name || 'Guest Reader')
-        .replace(/<[^>]*>/g, '')
-        .trim()
-        .slice(0, 80);
-      const rawContent = String(req.body?.content || '')
-        .replace(/<[^>]*>/g, '')
-        .trim()
-        .slice(0, 1500);
+      const cleanName = sanitizeText(req.body?.author_name || 'Guest Reader', 60);
+      const cleanContent = sanitizeText(req.body?.content, 1000);
 
-      if (rawContent.length < 2) {
-        res.status(400).json({ success: false, message: 'Comment is too short' });
+      if (cleanContent.length < 2) {
+        res.status(400).json({
+          success: false,
+          message: 'Comment must be at least 2 characters long',
+        });
         return;
       }
 
-      const created = await publicBlogRepo.createComment(articleId, {
-        author_name: rawName || 'Guest Reader',
-        content: rawContent,
+      const created = await blogService.addComment(articleId, {
+        author_name: cleanName || 'Guest Reader',
+        content: cleanContent,
       });
+
       res.status(201).json({ success: true, data: created });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to post comment';
-      res.status(400).json({ success: false, message });
+    } catch (err) {
+      next(err);
     }
   },
 };

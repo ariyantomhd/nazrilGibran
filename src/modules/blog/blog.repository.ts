@@ -1,5 +1,12 @@
 // src/modules/blog/blog.repository.ts
 import { supabaseAdmin } from '../../config/supabase';
+import type {
+  BlogArticleFilter,
+  BlogArticleRecord,
+  BlogCategoryRecord,
+  BlogCommentRecord,
+  CreateCommentInput,
+} from '../../types/blog';
 
 function parseJsonArray(raw: unknown): string[] {
   if (Array.isArray(raw)) {
@@ -21,7 +28,7 @@ function parseJsonArray(raw: unknown): string[] {
   return [];
 }
 
-async function enrichArticles(rows: Record<string, unknown>[]) {
+async function enrichArticles(rows: Record<string, unknown>[]): Promise<BlogArticleRecord[]> {
   const { data: cats } = await supabaseAdmin
     .from('blog_categories')
     .select('id, name, slug, badge_color');
@@ -76,21 +83,20 @@ async function enrichArticles(rows: Record<string, unknown>[]) {
 }
 
 export const publicBlogRepo = {
-  async listCategories() {
+  async listCategories(): Promise<BlogCategoryRecord[]> {
     const { data, error } = await supabaseAdmin
       .from('blog_categories')
       .select('id, name, slug, badge_color')
       .order('name', { ascending: true });
 
-    if (error) throw new Error(error.message);
-    return data || [];
+    if (error) {
+      console.error('[blog.repository.listCategories] DB Error:', error.message);
+      throw new Error('Failed to load blog categories');
+    }
+    return (data || []) as BlogCategoryRecord[];
   },
 
-  async listPublishedArticles(filters: {
-    category_id?: string;
-    category?: string;
-    search?: string;
-  }) {
+  async listPublishedArticles(filters: BlogArticleFilter): Promise<BlogArticleRecord[]> {
     let resolvedCategoryId: number | null = null;
 
     if (filters.category_id && filters.category_id !== 'ALL') {
@@ -118,26 +124,30 @@ export const publicBlogRepo = {
     }
 
     if (filters.search?.trim()) {
-      const safe = filters.search.replace(/[,().%]/g, '').trim();
+      const safe = filters.search.replace(/[,().%]/g, '').trim().slice(0, 100);
       if (safe) {
         query = query.or(`title.ilike.%${safe}%,excerpt.ilike.%${safe}%`);
       }
     }
 
     const { data, error } = await query;
-    if (error) throw new Error(error.message);
+    if (error) {
+      console.error('[blog.repository.listPublishedArticles] DB Error:', error.message);
+      throw new Error('Failed to load blog articles');
+    }
 
-    return await enrichArticles((data || []) as Record<string, unknown>[]);
+    return enrichArticles((data || []) as Record<string, unknown>[]);
   },
 
-  async getArticleBySlug(slugOrId: string) {
-    const isId = /^\d+$/.test(slugOrId.trim());
+  async getArticleBySlug(slugOrId: string): Promise<BlogArticleRecord | null> {
+    const cleanParam = slugOrId.trim().slice(0, 160);
+    const isId = /^\d+$/.test(cleanParam);
     let query = supabaseAdmin
       .from('blog_articles')
       .select('*')
       .eq('status', 'PUBLISHED');
 
-    query = isId ? query.eq('id', Number(slugOrId)) : query.eq('slug', slugOrId.trim());
+    query = isId ? query.eq('id', Number(cleanParam)) : query.eq('slug', cleanParam);
 
     const { data, error } = await query.maybeSingle();
     if (error || !data) return null;
@@ -149,26 +159,56 @@ export const publicBlogRepo = {
       .from('blog_comments')
       .select('id, article_id, user_id, author_name, content, created_at')
       .eq('article_id', enriched.id)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .limit(100);
 
     return {
       ...enriched,
-      comments: comments || [],
+      comments: (comments || []) as BlogCommentRecord[],
     };
   },
 
-  async createComment(articleId: number, payload: { author_name: string; content: string }) {
+  async incrementViews(articleId: number, currentViews: number): Promise<void> {
+    await supabaseAdmin
+      .from('blog_articles')
+      .update({ views_count: currentViews + 1 })
+      .eq('id', articleId)
+      .eq('status', 'PUBLISHED');
+  },
+
+  async createComment(payload: CreateCommentInput): Promise<BlogCommentRecord> {
+    // Pastikan artikel target benar-benar ada & berstatus PUBLISHED
+    const { data: publishedArticle, error: checkError } = await supabaseAdmin
+      .from('blog_articles')
+      .select('id')
+      .eq('id', payload.article_id)
+      .eq('status', 'PUBLISHED')
+      .maybeSingle();
+
+    if (checkError || !publishedArticle) {
+      const notFoundErr = new Error('Target article not found or unpublished') as Error & {
+        statusCode?: number;
+      };
+      notFoundErr.statusCode = 404;
+      throw notFoundErr;
+    }
+
     const { data, error } = await supabaseAdmin
       .from('blog_comments')
       .insert({
-        article_id: articleId,
+        article_id: payload.article_id,
         author_name: payload.author_name,
         content: payload.content,
+        user_id: payload.user_id ?? null,
       })
-      .select('*')
+      .select('id, article_id, user_id, author_name, content, created_at')
       .single();
 
-    if (error || !data) throw new Error(error?.message || 'Failed to submit comment');
-    return data;
+    if (error || !data) {
+      console.error('[blog.repository.createComment] DB Error:', error?.message);
+      throw new Error('Failed to submit comment');
+    }
+
+    return data as BlogCommentRecord;
   },
 };
