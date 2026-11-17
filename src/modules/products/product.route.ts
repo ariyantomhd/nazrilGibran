@@ -2,6 +2,7 @@
 import { Router } from 'express';
 import { productController } from './product.controller';
 import { verifyAuth, optionalAuth } from '../../middlewares/auth.middleware';
+import { interactionRateLimiter } from '../../middlewares/rateLimiter';
 
 const router = Router();
 
@@ -18,8 +19,18 @@ router.get('/:id/galleries', productController.getProductGalleries);
 
 // === PRODUCT INTERACTIONS (LIKES & REVIEWS) ===
 router.get('/:id/likes', optionalAuth, productController.getProductLikes);
-router.post('/:id/like', verifyAuth, productController.toggleProductLike);
+router.post(
+  '/:id/like',
+  verifyAuth,
+  interactionRateLimiter,
+  productController.toggleProductLike
+);
 router.get('/:id/reviews', productController.getProductReviews);
-router.post('/:id/reviews', verifyAuth, productController.submitProductReview);
+router.post(
+  '/:id/reviews',
+  verifyAuth,
+  interactionRateLimiter,
+  productController.submitProductReview
+);
 
 export default router;
