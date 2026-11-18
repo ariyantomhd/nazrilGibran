@@ -4,7 +4,7 @@ import { TransactionRecordPayload } from '../../types/payment';
 
 export const paymentRepo = {
   // Save payment transaction log to database table
-  async saveTransactionRecord(transactionData: TransactionRecordPayload): Promise<any> {
+  async saveTransactionRecord(transactionData: TransactionRecordPayload): Promise<unknown> {
     const { data, error } = await supabaseAdmin
       .from('transactions')
       .insert([transactionData])
@@ -12,11 +12,10 @@ export const paymentRepo = {
       .single();
 
     if (error) {
-      // Ignore or log warning if optional transactions table does not exist yet
-      console.warn('Failed to save transaction log to table:', error.message);
+      console.warn('[Payment Transaction Log Warning]:', error.message);
       return null;
     }
-    
+
     return data;
-  }
+  },
 };

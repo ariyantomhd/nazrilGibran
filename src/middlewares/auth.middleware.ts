@@ -3,6 +3,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { AuthenticatedUser } from '../types/auth';
 import { UserRole } from '../types/enums';
+import { AUTH_COOKIE_NAME } from '../utils/authCookie';
 
 interface JwtSessionPayload {
   sub?: string;
@@ -14,13 +15,32 @@ interface JwtSessionPayload {
   exp?: number;
 }
 
+function extractTokenFromRequest(req: Request): string | null {
+  // 1. Primary: Read from HttpOnly session cookie
+  if (req.cookies && typeof req.cookies[AUTH_COOKIE_NAME] === 'string') {
+    const cookieToken = req.cookies[AUTH_COOKIE_NAME].trim();
+    if (cookieToken) return cookieToken;
+  }
+
+  // 2. Fallback: Read from Authorization Bearer header
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const bearerToken = authHeader.slice(7).trim();
+    if (bearerToken) return bearerToken;
+  }
+
+  return null;
+}
+
 function extractVerifiedUser(token: string): AuthenticatedUser | null {
   const secret = process.env.JWT_SECRET;
   if (!secret) {
     throw new Error('JWT_SECRET is not configured in .env');
   }
 
-  const decoded = jwt.verify(token, secret) as JwtSessionPayload;
+  const decoded = jwt.verify(token, secret, {
+    algorithms: ['HS256'],
+  }) as JwtSessionPayload;
   const resolvedUserId = decoded.userId || decoded.sub;
 
   if (!resolvedUserId) return null;
@@ -39,24 +59,25 @@ export const verifyAuth = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      console.warn('[Auth Rejected]: Missing or malformed Authorization header', {
-        url: req.originalUrl,
-        authHeader: authHeader || 'EMPTY',
+    const token = extractTokenFromRequest(req);
+
+    if (!token) {
+      res.status(401).json({
+        success: false,
+        code: 'MISSING_TOKEN',
+        message: 'Authentication required. Please sign in.',
       });
-      res.status(401).json({ success: false, message: 'Authentication token not found' });
       return;
     }
 
-    const token = authHeader.split(' ')[1];
     const user = extractVerifiedUser(token);
 
     if (!user) {
-      console.warn('[Auth Rejected]: JWT payload is missing userId/sub', {
-        url: req.originalUrl,
+      res.status(401).json({
+        success: false,
+        code: 'INVALID_PAYLOAD',
+        message: 'Invalid session payload.',
       });
-      res.status(401).json({ success: false, message: 'Invalid token payload' });
       return;
     }
 
@@ -64,20 +85,15 @@ export const verifyAuth = async (
     req.user = user;
     next();
   } catch (error: unknown) {
-    const rawErrorMessage =
-      error instanceof Error ? error.message : String(error);
+    const isMissingSecret =
+      error instanceof Error && error.message.includes('JWT_SECRET');
 
-    console.error('[Auth Middleware Rejected]:', {
-      url: req.originalUrl,
-      reason: rawErrorMessage,
-      secretLength: process.env.JWT_SECRET?.length || 0,
-      tokenPreview: req.headers.authorization?.slice(0, 30) + '...',
-    });
-
-    if (rawErrorMessage.includes('JWT_SECRET')) {
-      res
-        .status(500)
-        .json({ success: false, message: 'Server configuration is incomplete' });
+    if (isMissingSecret) {
+      console.error('[Auth Config Error]: JWT_SECRET is missing');
+      res.status(500).json({
+        success: false,
+        message: 'Server configuration is incomplete',
+      });
       return;
     }
 
@@ -88,8 +104,8 @@ export const verifyAuth = async (
       success: false,
       code: isExpired ? 'TOKEN_EXPIRED' : 'INVALID_TOKEN',
       message: isExpired
-        ? 'Your session has expired. Please sign in again'
-        : `Invalid authentication token (${rawErrorMessage})`,
+        ? 'Your session has expired. Please sign in again.'
+        : 'Invalid authentication session.',
     });
   }
 };
@@ -100,9 +116,8 @@ export const optionalAuth = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.split(' ')[1];
+    const token = extractTokenFromRequest(req);
+    if (token) {
       const user = extractVerifiedUser(token);
       if (user) {
         req.userId = user.id;

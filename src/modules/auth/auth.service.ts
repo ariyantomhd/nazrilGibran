@@ -1,6 +1,7 @@
 // src/modules/auth/auth.service.ts
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
+import { z } from 'zod';
 import { authRepo } from './auth.repo';
 import { socialProviders } from './providers';
 import { SocialProvider, UpdateUserProfileInput } from '../../types/auth';
@@ -8,10 +9,29 @@ import { ClientTelemetryData } from '../../utils/clientTelemetry';
 
 interface OAuthStatePayload {
   provider: SocialProvider;
-  mode: 'signin' | 'signup';
   codeVerifier?: string;
   exp: number;
 }
+
+const updateProfileSchema = z.object({
+  username: z
+    .string()
+    .trim()
+    .min(2, 'Username must be at least 2 characters long.')
+    .max(32, 'Username cannot exceed 32 characters.')
+    .regex(
+      /^[a-zA-Z0-9_.-]+$/,
+      'Username may only contain letters, numbers, dots, underscores, or hyphens.'
+    )
+    .optional(),
+  avatar_url: z
+    .string()
+    .trim()
+    .url('Avatar URL must be a valid HTTPS URL.')
+    .max(500, 'Avatar URL is too long.')
+    .nullable()
+    .optional(),
+});
 
 const getJwtSecret = (): string => {
   const secret = process.env.JWT_SECRET;
@@ -62,19 +82,16 @@ function generatePkcePair() {
 }
 
 export const authService = {
-  getSocialAuthUrl(
-    provider: SocialProvider,
-    mode: 'signin' | 'signup' = 'signin'
-  ): string {
+  getSocialAuthUrl(provider: SocialProvider): string {
     const exp = Date.now() + 10 * 60 * 1000;
 
     if (provider === 'x') {
       const { codeVerifier, codeChallenge } = generatePkcePair();
-      const state = signOAuthState({ provider, mode, codeVerifier, exp });
+      const state = signOAuthState({ provider, codeVerifier, exp });
       return socialProviders.buildAuthorizeUrl(provider, state, codeChallenge);
     }
 
-    const state = signOAuthState({ provider, mode, exp });
+    const state = signOAuthState({ provider, exp });
     return socialProviders.buildAuthorizeUrl(provider, state);
   },
 
@@ -95,7 +112,7 @@ export const authService = {
       stateData.codeVerifier
     );
 
-    const user = await authRepo.upsertSocialUser(profile, stateData.mode);
+    const user = await authRepo.upsertSocialUser(profile);
 
     if (telemetry && user.id) {
       await authRepo.updateUserTelemetry(user.id, telemetry);
@@ -122,7 +139,14 @@ export const authService = {
     return user;
   },
 
-  async updateProfile(userId: string, payload: UpdateUserProfileInput) {
-    return authRepo.updateProfile(userId, payload);
+  async updateProfile(userId: string, payload: Partial<UpdateUserProfileInput>) {
+    const parsed = updateProfileSchema.safeParse(payload);
+    if (!parsed.success) {
+      throw new Error(
+        parsed.error.issues[0]?.message || 'Invalid profile update payload.'
+      );
+    }
+
+    return authRepo.updateProfile(userId, parsed.data);
   },
 };

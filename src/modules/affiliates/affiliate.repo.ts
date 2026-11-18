@@ -22,7 +22,7 @@ export const affiliateRepo = {
       .ilike('affiliate_code', affiliateCode.trim())
       .maybeSingle();
 
-    if (error) throw new Error(`Gagal memeriksa kode affiliate: ${error.message}`);
+    if (error) throw new Error(`Failed to verify affiliate code: ${error.message}`);
     return data as AffiliateRecord | null;
   },
 
@@ -33,31 +33,36 @@ export const affiliateRepo = {
       .eq('user_id', userId)
       .maybeSingle();
 
-    if (error) throw new Error(`Gagal mengambil data affiliate: ${error.message}`);
+    if (error) throw new Error(`Failed to fetch affiliate profile: ${error.message}`);
     return data as AffiliateRecord | null;
   },
 
-  async createAffiliate(userId: string, affiliateCode: string, payoutAccount?: string): Promise<AffiliateRecord> {
+  async createAffiliate(
+    userId: string,
+    affiliateCode: string,
+    payoutAccount?: string
+  ): Promise<AffiliateRecord> {
     const { data, error } = await supabaseAdmin
       .from('affiliates')
       .insert([
         {
           user_id: userId,
           affiliate_code: affiliateCode.toLowerCase(),
-          status: 'APPROVED',
+          status: 'PENDING', // Approval handled centrally by admin-BE
           payout_account: payoutAccount || null,
         },
       ])
       .select('*')
       .single();
 
-    if (error) throw new Error(`Gagal mendaftarkan affiliate: ${error.message}`);
+    if (error) throw new Error(`Failed to register affiliate account: ${error.message}`);
     return data as AffiliateRecord;
   },
 
   async getProductCommissionInfo(productIdentifier: string) {
-    // Mendukung pencarian lewat slug ataupun id produk
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(productIdentifier);
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      productIdentifier
+    );
     const column = isUuid ? 'id' : 'slug';
 
     const { data: product, error } = await supabaseAdmin
@@ -80,6 +85,27 @@ export const affiliateRepo = {
     };
   },
 
+  async getOrderInternalAffiliateMeta(orderId: string): Promise<{
+    buyer_id: string;
+    affiliate_token_used: string | null;
+    subtotal: number;
+    discount_total: number;
+  } | null> {
+    const { data, error } = await supabaseAdmin
+      .from('orders')
+      .select('buyer_id, affiliate_token_used, subtotal, discount_total')
+      .eq('id', orderId)
+      .maybeSingle();
+
+    if (error || !data) return null;
+    return {
+      buyer_id: String(data.buyer_id),
+      affiliate_token_used: data.affiliate_token_used ?? null,
+      subtotal: Number(data.subtotal ?? 0),
+      discount_total: Number(data.discount_total ?? 0),
+    };
+  },
+
   async incrementClicks(affiliateId: string, currentClicks: number): Promise<void> {
     await supabaseAdmin
       .from('affiliates')
@@ -92,11 +118,21 @@ export const affiliateRepo = {
 
   async recordOrderCommissions(
     affiliate: AffiliateRecord,
-    order: { id: string; buyer_id: string; order_items?: any[] }
+    order: {
+      id: string;
+      buyer_id: string;
+      subtotal?: number;
+      discount_total?: number;
+      order_items?: Array<{
+        id?: string;
+        product_id: string;
+        price_at_purchase?: number | string;
+      }>;
+    }
   ): Promise<number> {
     if (!order.order_items || order.order_items.length === 0) return 0;
 
-    // Cegah duplikasi komisi untuk order yang sama
+    // Prevent duplicate commission entries for the same order
     const { data: existing } = await supabaseAdmin
       .from('affiliate_commissions')
       .select('id')
@@ -112,22 +148,31 @@ export const affiliateRepo = {
       .in('id', productIds);
 
     const productMap = new Map<string, { rate: number; enabled: boolean }>();
-    (products || []).forEach((p: any) => {
+    (products || []).forEach((p: { id: string; affiliate_commission_rate?: number; is_affiliate_enabled?: boolean }) => {
       productMap.set(String(p.id), {
         rate: Number(p.affiliate_commission_rate ?? 8),
         enabled: p.is_affiliate_enabled !== false,
       });
     });
 
-    const commissionRows: any[] = [];
+    // Calculate net-after-discount ratio so commissions are based on actual paid item value
+    const grossSubtotal = Number(order.subtotal ?? 0);
+    const discountTotal = Math.max(0, Number(order.discount_total ?? 0));
+    const netRatio =
+      grossSubtotal > 0
+        ? Math.max(0, Math.min(1, (grossSubtotal - discountTotal) / grossSubtotal))
+        : 1;
+
+    const commissionRows: Array<Record<string, unknown>> = [];
     let totalCommissionEarned = 0;
 
     for (const item of order.order_items) {
       const prodRule = productMap.get(String(item.product_id)) || { rate: 8, enabled: true };
       if (!prodRule.enabled || prodRule.rate <= 0) continue;
 
-      const itemSubtotal = Number(item.price_at_purchase || 0);
-      const commissionAmount = Number(((itemSubtotal * prodRule.rate) / 100).toFixed(2));
+      const rawItemPrice = Number(item.price_at_purchase || 0);
+      const netItemSubtotal = Number((rawItemPrice * netRatio).toFixed(2));
+      const commissionAmount = Number(((netItemSubtotal * prodRule.rate) / 100).toFixed(2));
       if (commissionAmount <= 0) continue;
 
       totalCommissionEarned += commissionAmount;
@@ -137,10 +182,10 @@ export const affiliateRepo = {
         order_item_id: item.id || null,
         product_id: item.product_id,
         buyer_id: order.buyer_id,
-        item_subtotal: itemSubtotal,
+        item_subtotal: netItemSubtotal,
         commission_rate: prodRule.rate,
         commission_amount: commissionAmount,
-        status: 'APPROVED',
+        status: 'PENDING', // Hold period & release managed by affiliate-BE
       });
     }
 
@@ -155,13 +200,14 @@ export const affiliateRepo = {
       return 0;
     }
 
-    // Update saldo & statistik konversi affiliator
+    // Update conversion counter & pending_balance (total_earnings updated upon release in affiliate-BE)
     await supabaseAdmin
       .from('affiliates')
       .update({
         total_conversions: Number(affiliate.total_conversions || 0) + 1,
-        total_earnings: Number((Number(affiliate.total_earnings || 0) + totalCommissionEarned).toFixed(2)),
-        pending_balance: Number((Number(affiliate.pending_balance || 0) + totalCommissionEarned).toFixed(2)),
+        pending_balance: Number(
+          (Number(affiliate.pending_balance || 0) + totalCommissionEarned).toFixed(2)
+        ),
         updated_at: new Date().toISOString(),
       })
       .eq('id', affiliate.id);

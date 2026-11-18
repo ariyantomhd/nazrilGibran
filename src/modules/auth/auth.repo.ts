@@ -47,10 +47,7 @@ export const authRepo = {
     return null;
   },
 
-  async upsertSocialUser(
-    profile: SocialUserProfile,
-    mode: 'signin' | 'signup'
-  ): Promise<User> {
+  async upsertSocialUser(profile: SocialUserProfile): Promise<User> {
     const nowIso = new Date().toISOString();
     const normalizedEmail = profile.email
       ? profile.email.toLowerCase()
@@ -70,10 +67,6 @@ export const authRepo = {
         last_seen_at: nowIso,
         updated_at: nowIso,
       };
-
-      if (mode === 'signup') {
-        updatePayload.terms_accepted_at = nowIso;
-      }
 
       const { data, error } = await supabaseAdmin
         .from('users')
@@ -139,13 +132,13 @@ export const authRepo = {
 
   async updateProfile(
     userId: string,
-    payload: UpdateUserProfileInput
+    payload: Partial<UpdateUserProfileInput>
   ): Promise<User> {
     const { data, error } = await supabaseAdmin
       .from('users')
       .update({
-        username: payload.username,
-        avatar_url: payload.avatar_url,
+        ...(payload.username !== undefined ? { username: payload.username } : {}),
+        ...(payload.avatar_url !== undefined ? { avatar_url: payload.avatar_url } : {}),
         updated_at: new Date().toISOString(),
       })
       .eq('id', userId)

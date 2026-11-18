@@ -1,124 +1,97 @@
 // src/modules/products/product.controller.ts
 import { Request, Response } from 'express';
 import { productService } from './product.service';
-import { ProductQueryParams } from '../../types/product';
+import { AppError } from '../../utils/app-error';
+
+// ---------- Helpers ----------
+
+interface HandlerResult {
+  status?: number;
+  body: Record<string, unknown>;
+}
+
+type ControllerHandler = (req: Request) => Promise<HandlerResult>;
+
+/**
+ * Membungkus handler agar try/catch dan format respons seragam:
+ * - sukses  -> { success: true, ...body }
+ * - AppError -> status sesuai error, pesan dikirim apa adanya
+ * - error lain -> 500 dengan pesan generik (detail hanya di log server)
+ */
+const handle =
+  (handler: ControllerHandler) =>
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { status = 200, body } = await handler(req);
+      res.status(status).json({ success: true, ...body });
+    } catch (error) {
+      if (error instanceof AppError) {
+        res.status(error.statusCode).json({ success: false, message: error.message });
+        return;
+      }
+      console.error('[ProductController] Unexpected error:', error);
+      res.status(500).json({ success: false, message: 'Internal server error.' });
+    }
+  };
+
+const ok = (data: unknown): HandlerResult => ({ body: { data } });
+
+const getParam = (req: Request, name: string): string => req.params[name] as string;
+
+// ---------- Controller ----------
 
 export const productController = {
-  async getProducts(req: Request, res: Response): Promise<void> {
-    try {
-      const queryParams = req.query as unknown as ProductQueryParams;
-      const data = await productService.getProducts(queryParams);
-      res.status(200).json({ success: true, data });
-    } catch (error: any) {
-      res.status(400).json({ success: false, message: error.message });
-    }
-  },
+  // --- CATALOG ---
+  getProducts: handle(async (req) => ok(await productService.getProducts(req.query))),
 
-  async getFeaturedProducts(req: Request, res: Response): Promise<void> {
-    try {
-      const data = await productService.getFeaturedProducts();
-      res.status(200).json({ success: true, data });
-    } catch (error: any) {
-      res.status(400).json({ success: false, message: error.message });
-    }
-  },
+  getFeaturedProducts: handle(async () => ok(await productService.getFeaturedProducts())),
 
-  async getPopularProducts(req: Request, res: Response): Promise<void> {
-    try {
-      const data = await productService.getPopularProducts();
-      res.status(200).json({ success: true, data });
-    } catch (error: any) {
-      res.status(400).json({ success: false, message: error.message });
-    }
-  },
+  getPopularProducts: handle(async () => ok(await productService.getPopularProducts())),
 
-  async getBestDeals(req: Request, res: Response): Promise<void> {
-    try {
-      const data = await productService.getBestDeals();
-      res.status(200).json({ success: true, data });
-    } catch (error: any) {
-      res.status(400).json({ success: false, message: error.message });
-    }
-  },
+  getBestDeals: handle(async () => ok(await productService.getBestDeals())),
 
-  async getProductBySlug(req: Request, res: Response): Promise<void> {
-    try {
-      const slug = req.params.slug as string;
-      const data = await productService.getProductBySlug(slug);
-      res.status(200).json({ success: true, data });
-    } catch (error: any) {
-      res.status(404).json({ success: false, message: error.message });
-    }
-  },
+  getProductBySlug: handle(async (req) =>
+    ok(await productService.getProductBySlug(getParam(req, 'slug')))
+  ),
 
-  async getProductGalleries(req: Request, res: Response): Promise<void> {
-    try {
-      const id = req.params.id as string;
-      const data = await productService.getProductGalleries(id);
-      res.status(200).json({ success: true, data });
-    } catch (error: any) {
-      res.status(400).json({ success: false, message: error.message });
-    }
-  },
+  getProductGalleries: handle(async (req) =>
+    ok(await productService.getProductGalleries(getParam(req, 'id')))
+  ),
 
-  async getCategories(req: Request, res: Response): Promise<void> {
-    try {
-      const data = await productService.getCategories();
-      res.status(200).json({ success: true, data });
-    } catch (error: any) {
-      res.status(400).json({ success: false, message: error.message });
-    }
-  },
+  getCategories: handle(async () => ok(await productService.getCategories())),
+
+  // --- PURCHASE VERIFICATION ---
+  // Respons sengaja di-spread: { success, has_purchased }
+  checkProductPurchase: handle(async (req) => {
+    const result = await productService.checkPurchaseEligibility(getParam(req, 'id'), req.userId);
+    return { body: { ...result } };
+  }),
 
   // --- LIKES / WISHLIST ---
-  async getProductLikes(req: Request, res: Response): Promise<void> {
-    try {
-      const id = req.params.id as string;
-      const data = await productService.getProductLikes(id, req.userId);
-      res.status(200).json({ success: true, data });
-    } catch (error: any) {
-      res.status(400).json({ success: false, message: error.message });
-    }
-  },
+  getProductLikes: handle(async (req) =>
+    ok(await productService.getProductLikes(getParam(req, 'id'), req.userId))
+  ),
 
-  async toggleProductLike(req: Request, res: Response): Promise<void> {
-    try {
-      const id = req.params.id as string;
-      const data = await productService.toggleProductLike(id, req.userId as string);
-      res.status(200).json({ success: true, data });
-    } catch (error: any) {
-      res.status(400).json({ success: false, message: error.message });
-    }
-  },
+  toggleProductLike: handle(async (req) =>
+    ok(await productService.toggleProductLike(getParam(req, 'id'), req.userId))
+  ),
 
   // --- REVIEWS & RATINGS ---
-  async getProductReviews(req: Request, res: Response): Promise<void> {
-    try {
-      const id = req.params.id as string;
-      const data = await productService.getProductReviews(id);
-      res.status(200).json({ success: true, data });
-    } catch (error: any) {
-      res.status(400).json({ success: false, message: error.message });
-    }
-  },
+  getProductReviews: handle(async (req) =>
+    ok(await productService.getProductReviews(getParam(req, 'id')))
+  ),
 
-  async submitProductReview(req: Request, res: Response): Promise<void> {
-    try {
-      const id = req.params.id as string;
-      const { rating, comment } = req.body;
-      const data = await productService.submitProductReview(
-        id,
-        req.userId as string,
-        rating,
-        comment,
-      );
-      res.status(201).json({
-        success: true,
-        message: 'Review submitted successfully',
-        data,
-      });
-    } catch (error: any) {
-      res.status(400).json({ success: false, message: error.message });
-    }
-  },
+  submitProductReview: handle(async (req) => {
+    const { rating, comment } = req.body ?? {};
+    const data = await productService.submitProductReview(
+      getParam(req, 'id'),
+      req.userId,
+      rating,
+      comment
+    );
+    return {
+      status: 201,
+      body: { message: 'Verified review submitted successfully', data },
+    };
+  }),
 };

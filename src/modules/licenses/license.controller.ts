@@ -6,6 +6,14 @@ interface ApiErrorResponse {
   message?: string;
 }
 
+function extractClientIp(req: Request): string | undefined {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded.length > 0) {
+    return forwarded.split(',')[0].trim();
+  }
+  return req.socket?.remoteAddress;
+}
+
 export const licenseController = {
   async getMyLicenses(req: Request, res: Response): Promise<void> {
     try {
@@ -25,9 +33,18 @@ export const licenseController = {
 
   async downloadProduct(req: Request, res: Response): Promise<void> {
     try {
-      const licenseId = req.params.licenseId as string;
-      const data = await licenseService.getDownloadUrl(req.userId!, licenseId);
-      res.status(200).json({ success: true, message: 'Download link generated successfully', data });
+      const licenseId = String(req.params.licenseId || '');
+      const ipAddress = extractClientIp(req);
+      const data = await licenseService.getDownloadUrl(
+        req.userId!,
+        licenseId,
+        ipAddress
+      );
+      res.status(200).json({
+        success: true,
+        message: 'Download link generated successfully.',
+        data,
+      });
     } catch (error: unknown) {
       let message = 'Failed to generate download link.';
       if (error instanceof Error) {
@@ -38,5 +55,5 @@ export const licenseController = {
       }
       res.status(400).json({ success: false, message });
     }
-  }
+  },
 };

@@ -1,4 +1,6 @@
 // src/modules/orders/order.service.ts
+import crypto from 'crypto';
+import { z } from 'zod';
 import { supabaseAdmin } from '../../config/supabase';
 import { orderRepo } from './order.repo';
 import { couponService } from '../coupon/coupon.service';
@@ -6,6 +8,40 @@ import { Order, OrderItem } from '../../types/order';
 import { PaymentGateway, LicenseType, OrderStatus } from '../../types/enums';
 
 const DEFAULT_SUPPORT_PRICE = 12.0;
+const PLATFORM_SELLER_FEE_PERCENTAGE = 10;
+const PLATFORM_BUYER_FEE = 0;
+const PLATFORM_GATEWAY_FEE = 0;
+
+const createOrderSchema = z.object({
+  payment_gateway: z.nativeEnum(PaymentGateway).optional(),
+  affiliate_token_used: z
+    .string()
+    .trim()
+    .max(50, 'Affiliate code is too long.')
+    .regex(/^[a-zA-Z0-9_-]*$/, 'Invalid affiliate code format.')
+    .nullable()
+    .optional(),
+  coupon_code: z
+    .string()
+    .trim()
+    .max(50, 'Coupon code is too long.')
+    .regex(/^[a-zA-Z0-9_-]*$/, 'Invalid coupon code format.')
+    .nullable()
+    .optional(),
+  items: z
+    .array(
+      z.object({
+        product_id: z.string().min(1, 'Product ID is required.'),
+        quantity: z.number().int().min(1).max(20).optional().default(1),
+        license_type: z.string().trim().optional().default('REGULAR'),
+        with_support: z.boolean().optional().default(false),
+      })
+    )
+    .min(1, 'Order items cannot be empty.')
+    .max(25, 'Maximum 25 items per order.'),
+});
+
+const uuidSchema = z.string().uuid('Invalid order ID format.');
 
 export interface CreateOrderInput {
   subtotal?: number;
@@ -33,6 +69,7 @@ interface VerifiedProductRow {
   extended_price: number | null;
   discount_price: number | null;
   support_price: number | null;
+  status?: string | null;
 }
 
 type PreparedOrderItem = Omit<OrderItem, 'id' | 'order_id' | 'created_at'> & {
@@ -40,11 +77,24 @@ type PreparedOrderItem = Omit<OrderItem, 'id' | 'order_id' | 'created_at'> & {
   support_price: number;
 };
 
+function generateInvoiceNumber(): string {
+  const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const randomHex = crypto.randomBytes(3).toString('hex').toUpperCase();
+  return `INV-${dateStr}-${randomHex}`;
+}
+
 export const orderService = {
-  async createOrder(buyerId: string, input: CreateOrderInput): Promise<Order> {
-    if (!input.items || input.items.length === 0) {
-      throw new Error('Order items cannot be empty.');
+  async createOrder(buyerId: string, rawInput: CreateOrderInput): Promise<Order> {
+    if (!buyerId) {
+      throw new Error('Authentication required.');
     }
+
+    const parsed = createOrderSchema.safeParse(rawInput);
+    if (!parsed.success) {
+      throw new Error(parsed.error.issues[0]?.message || 'Invalid order payload.');
+    }
+
+    const input = parsed.data;
 
     // 1. Fetch actual prices from database as Single Source of Truth
     const productIds = Array.from(new Set(input.items.map((item) => item.product_id)));
@@ -69,11 +119,21 @@ export const orderService = {
         throw new Error(`Product with ID ${item.product_id} was not found.`);
       }
 
-      const qty = Math.max(1, Number(item.quantity || 1));
+      const qty = Math.max(1, Math.min(20, Number(item.quantity || 1)));
       const isExtended = String(item.license_type || 'REGULAR').toUpperCase() === 'EXTENDED';
-      const regularPrice = Number(dbProduct.discount_price ?? dbProduct.regular_price ?? 0);
-      const extendedPrice = Number(dbProduct.extended_price ?? regularPrice * 2);
-      const baseUnitPrice = isExtended ? extendedPrice : regularPrice;
+
+      const baseRegular = Number(dbProduct.regular_price ?? 0);
+      const promoRegular = Number(dbProduct.discount_price ?? 0);
+      const effectiveRegular =
+        promoRegular > 0 && promoRegular < baseRegular ? promoRegular : baseRegular;
+
+      const rawExtended = Number(dbProduct.extended_price ?? 0);
+      const effectiveExtended = rawExtended > 0 ? rawExtended : effectiveRegular * 2;
+
+      const baseUnitPrice = isExtended ? effectiveExtended : effectiveRegular;
+      if (baseUnitPrice <= 0) {
+        throw new Error('Invalid product price configuration.');
+      }
 
       const rawSupport = Number(dbProduct.support_price ?? 0);
       const unitSupportPrice = item.with_support
@@ -85,7 +145,8 @@ export const orderService = {
       const lineTotal = Number(((baseUnitPrice + unitSupportPrice) * qty).toFixed(2));
       verifiedSubtotal += lineTotal;
 
-      const feePercentage = item.seller_fee_percentage || 10;
+      // Enforce server-controlled platform fee percentage (never trust client-submitted fee)
+      const feePercentage = PLATFORM_SELLER_FEE_PERCENTAGE;
       const resolvedLicense: LicenseType = (isExtended ? 'EXTENDED' : 'REGULAR') as LicenseType;
 
       // Expand based on quantity so each unit receives its own individual license
@@ -113,26 +174,37 @@ export const orderService = {
     let verifiedGrandTotal = verifiedSubtotal;
     let appliedCouponCode: string | null = null;
 
-    if (input.coupon_code) {
+    if (input.coupon_code && input.coupon_code.trim().length > 0) {
       const couponResult = await couponService.validateAndCalculate(
-        input.coupon_code,
+        input.coupon_code.trim(),
         verifiedSubtotal
       );
-      verifiedDiscount = couponResult.discountAmount;
-      verifiedGrandTotal = couponResult.finalTotal;
+      verifiedDiscount = Math.max(0, Number(couponResult.discountAmount || 0));
+      verifiedGrandTotal = Math.max(0, Number(couponResult.finalTotal || 0));
       appliedCouponCode = couponResult.code;
     }
 
-    const buyerFee = Number(input.buyer_fee || 0);
-    const gatewayFee = Number(input.gateway_fee || 0);
-    verifiedGrandTotal = Number((verifiedGrandTotal + buyerFee + gatewayFee).toFixed(2));
+    // Never allow client-supplied negative fees to reduce grand_total
+    const buyerFee = PLATFORM_BUYER_FEE;
+    const gatewayFee = PLATFORM_GATEWAY_FEE;
+    verifiedGrandTotal = Number(
+      Math.max(0, verifiedGrandTotal + buyerFee + gatewayFee).toFixed(2)
+    );
 
-    // 3. Generate Invoice Number
-    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const randomStr = Math.random().toString(36).substring(2, 6).toUpperCase();
-    const invoiceNumber = `INV-${dateStr}-${randomStr}`;
+    if (verifiedGrandTotal <= 0) {
+      throw new Error('Order total must be greater than $0.00.');
+    }
 
-    // 4. Save main Order to database
+    // 3. Generate Cryptographic Invoice Number
+    const invoiceNumber = generateInvoiceNumber();
+
+    // 4. Normalize optional referral token
+    const cleanAffiliateToken =
+      input.affiliate_token_used && input.affiliate_token_used.trim().length > 0
+        ? input.affiliate_token_used.trim().toLowerCase()
+        : null;
+
+    // 5. Save main Order to database
     const orderData: Omit<Order, 'id' | 'created_at' | 'updated_at' | 'order_items'> & {
       coupon_code: string | null;
     } = {
@@ -146,20 +218,14 @@ export const orderService = {
       payment_gateway: input.payment_gateway || PaymentGateway.PAYPAL,
       paypal_transaction_id: null,
       payment_status: 'PENDING' as OrderStatus,
-      affiliate_token_used: input.affiliate_token_used || null,
+      affiliate_token_used: cleanAffiliateToken,
       coupon_code: appliedCouponCode,
     };
 
-    const newOrder = await orderRepo.createOrder(orderData);
+    // 6. Save Order and Items atomically via PostgreSQL RPC
+    const newOrder = await orderRepo.createOrderAtomic(orderData, preparedOrderItems);
 
-    // 5. Save Order Items
-    const itemsWithOrderId: Omit<OrderItem, 'id' | 'created_at'>[] = preparedOrderItems.map((row) => ({
-      ...row,
-      order_id: newOrder.id,
-    }));
-    await orderRepo.createOrderItems(itemsWithOrderId);
-
-    // 6. Mark coupon as used
+    // 7. Mark coupon as used
     if (appliedCouponCode) {
       await couponService.markCouponAsUsed(appliedCouponCode);
     }
@@ -168,12 +234,20 @@ export const orderService = {
   },
 
   async getOrderById(buyerId: string, orderId: string): Promise<Order> {
-    const order = await orderRepo.getOrderById(orderId, buyerId);
-    if (!order) throw new Error('Order not found or you do not have access');
+    const parsedId = uuidSchema.safeParse(orderId);
+    if (!parsedId.success) {
+      throw new Error('Invalid order identifier.');
+    }
+
+    const order = await orderRepo.getOrderById(parsedId.data, buyerId);
+    if (!order) throw new Error('Order not found or you do not have access.');
     return order;
   },
 
   async getMyOrders(buyerId: string): Promise<Order[]> {
+    if (!buyerId) {
+      throw new Error('Authentication required.');
+    }
     return await orderRepo.getOrdersByBuyerId(buyerId);
   },
 };

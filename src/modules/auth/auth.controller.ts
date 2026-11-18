@@ -3,13 +3,9 @@ import { Request, Response } from 'express';
 import { authService } from './auth.service';
 import { inspectClientTelemetry } from '../../utils/clientTelemetry';
 import { SocialProvider } from '../../types/auth';
+import { setAuthCookie, clearAuthCookie } from '../../utils/authCookie';
 
-const ALLOWED_PROVIDERS: SocialProvider[] = [
-  'google',
-  'facebook',
-  'x',
-  'discord',
-];
+const ALLOWED_PROVIDERS: SocialProvider[] = ['google', 'x'];
 
 const getFrontendBaseUrl = (): string =>
   (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
@@ -25,8 +21,7 @@ export const authController = {
         return;
       }
 
-      const mode = req.query.mode === 'signup' ? 'signup' : 'signin';
-      const url = authService.getSocialAuthUrl(provider, mode);
+      const url = authService.getSocialAuthUrl(provider);
 
       if (req.headers.accept?.includes('application/json')) {
         res.status(200).json({ success: true, url });
@@ -73,9 +68,10 @@ export const authController = {
         telemetry
       );
 
-      res.redirect(
-        `${frontendUrl}/dashboard?token=${encodeURIComponent(token)}`
-      );
+      // Store JWT session token in HttpOnly cookie instead of exposing it in URL query params
+      setAuthCookie(res, token);
+
+      res.redirect(`${frontendUrl}/dashboard?auth=success`);
     } catch (error: unknown) {
       const message =
         error instanceof Error ? error.message : 'AuthenticationFailed';
@@ -120,6 +116,7 @@ export const authController = {
   },
 
   async signout(_req: Request, res: Response): Promise<void> {
+    clearAuthCookie(res);
     res.status(200).json({ success: true, message: 'Signed out successfully' });
   },
 };

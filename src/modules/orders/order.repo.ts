@@ -1,59 +1,83 @@
+// src/modules/orders/order.repo.ts
 import { supabaseAdmin } from '../../config/supabase';
 import { Order, OrderItem } from '../../types/order';
 import { OrderStatus } from '../../types/enums';
 
-export const orderRepo = {
-  // 1. Insert into orders table
-  async createOrder(orderData: Omit<Order, 'id' | 'created_at' | 'updated_at' | 'order_items'>): Promise<Order> {
-    const { data, error } = await supabaseAdmin
-      .from('orders')
-      .insert([orderData])
-      .select()
-      .single();
+// Explicit safe columns for buyer-facing DTO (excludes internal seller fee & affiliate token fields)
+const SAFE_ORDER_SELECT = `
+  id,
+  buyer_id,
+  invoice_number,
+  subtotal,
+  discount_total,
+  buyer_fee,
+  gateway_fee,
+  grand_total,
+  payment_gateway,
+  paypal_transaction_id,
+  payment_status,
+  created_at,
+  updated_at,
+  order_items (
+    id,
+    order_id,
+    product_id,
+    license_type,
+    price_at_purchase,
+    created_at
+  )
+`;
 
-    if (error) throw new Error(`Failed to create order: ${error.message}`);
+export const orderRepo = {
+  // Atomic RPC call to create order and items in a single transaction
+  async createOrderAtomic(
+    orderData: Omit<Order, 'id' | 'created_at' | 'updated_at' | 'order_items'> & { coupon_code: string | null },
+    itemsData: Omit<OrderItem, 'id' | 'order_id' | 'created_at'>[]
+  ): Promise<Order> {
+    const { data, error } = await supabaseAdmin.rpc('create_order_with_items', {
+      p_order: orderData,
+      p_items: itemsData,
+    });
+
+    if (error) throw new Error(`Failed to create order atomically: ${error.message}`);
     return data as Order;
   },
 
-  // 2. Insert into order_items table (Bulk insert)
-  async createOrderItems(itemsData: Omit<OrderItem, 'id' | 'created_at'>[]): Promise<OrderItem[]> {
-    const { data, error } = await supabaseAdmin
-      .from('order_items')
-      .insert(itemsData)
-      .select();
-
-    if (error) throw new Error(`Failed to create order items: ${error.message}`);
-    return data as OrderItem[];
-  },
-
-  // 3. Fetch order details by ID and Buyer (Ensures users cannot access others' invoices)
+  // Fetch order details by ID and Buyer (Ensures users cannot access others' invoices)
   async getOrderById(orderId: string, buyerId: string): Promise<Order | null> {
     const { data, error } = await supabaseAdmin
       .from('orders')
-      .select('*, order_items(*)')
+      .select(SAFE_ORDER_SELECT)
       .eq('id', orderId)
       .eq('buyer_id', buyerId)
-      .single();
+      .maybeSingle();
 
-    if (error && error.code !== 'PGRST116') throw new Error(error.message);
-    return data as Order | null;
+    if (error) throw new Error(error.message);
+    return data as unknown as Order | null;
   },
 
-  // 4. Fetch all order history for the user
+  // Fetch all order history for the user
   async getOrdersByBuyerId(buyerId: string): Promise<Order[]> {
     const { data, error } = await supabaseAdmin
       .from('orders')
-      .select('*, order_items(*)')
+      .select(SAFE_ORDER_SELECT)
       .eq('buyer_id', buyerId)
       .order('created_at', { ascending: false });
 
     if (error) throw new Error(error.message);
-    return data as Order[];
+    return data as unknown as Order[];
   },
 
-  // 5. Update status after PayPal payment succeeds
-  async updatePaymentStatus(orderId: string, status: OrderStatus, paypalTxId?: string): Promise<void> {
-    const updateData: Partial<Order> = { payment_status: status };
+  // Update status after PayPal payment succeeds
+  async updatePaymentStatus(
+    orderId: string,
+    status: OrderStatus,
+    paypalTxId?: string
+  ): Promise<void> {
+    const updateData: Partial<Order> = {
+      payment_status: status,
+      updated_at: new Date().toISOString(),
+    };
     if (paypalTxId) updateData.paypal_transaction_id = paypalTxId;
 
     const { error } = await supabaseAdmin
@@ -62,5 +86,5 @@ export const orderRepo = {
       .eq('id', orderId);
 
     if (error) throw new Error(`Failed to update order status: ${error.message}`);
-  }
+  },
 };

@@ -2,22 +2,35 @@
 import { Request, Response } from 'express';
 import { downloadService } from './download.service';
 
+function extractClientIp(req: Request): string | undefined {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded.length > 0) {
+    return forwarded.split(',')[0].trim();
+  }
+  return req.socket?.remoteAddress;
+}
+
 export const downloadController = {
   async downloadProduct(req: Request, res: Response): Promise<void> {
     try {
       const { license_key } = req.body;
-      if (!license_key) {
-        res.status(400).json({ success: false, message: 'License key is required' });
+      if (!license_key || typeof license_key !== 'string') {
+        res.status(400).json({ success: false, message: 'License key is required.' });
         return;
       }
 
-      // Capture client IP address for audit logging
-      const ipAddress = (req.headers['x-forwarded-for'] || req.socket.remoteAddress) as string;
+      const ipAddress = extractClientIp(req);
+      const data = await downloadService.processDownload(
+        req.userId!,
+        license_key,
+        ipAddress
+      );
 
-      const data = await downloadService.processDownload(req.userId!, license_key, ipAddress);
       res.status(200).json({ success: true, data });
-    } catch (error: any) {
-      res.status(400).json({ success: false, message: error.message });
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to process download request.';
+      res.status(400).json({ success: false, message });
     }
-  }
+  },
 };
