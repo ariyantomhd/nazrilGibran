@@ -65,13 +65,10 @@ function requireUser(userId: string | undefined, message: string): string {
   return userId;
 }
 
-// Hanya menghapus tag HTML yang lengkap (<b>, </p>, <script ...>).
-// Teks seperti "I <3 this" tetap utuh.
 function stripHtmlTags(input: string): string {
   return input.replace(/<[^>]*>/g, '').trim();
 }
 
-// Menerima number atau string numerik. Boolean, null, dan string kosong ditolak (NaN).
 function toRatingNumber(raw: unknown): number {
   if (typeof raw === 'number') return raw;
   if (typeof raw === 'string' && raw.trim() !== '') return Number(raw);
@@ -93,7 +90,6 @@ export const productService = {
     return await productRepo.getProducts(parsed.data);
   },
 
-  // 3 endpoint khusus untuk landing page
   async getFeaturedProducts() {
     return await productRepo.getProducts({ is_featured: true, limit: LANDING_LIMITS.featured });
   },
@@ -124,13 +120,13 @@ export const productService = {
     return await productRepo.getCategories();
   },
 
-  // --- PURCHASE VERIFICATION ---
+  // --- PURCHASE & LICENSE VERIFICATION ---
   async checkPurchaseEligibility(rawProductId: string, userId?: string) {
     const productId = parseProductId(rawProductId);
-    if (!userId) return { has_purchased: false };
+    if (!userId) return { has_purchased: false, has_license: false };
 
     const hasPurchased = await productRepo.hasUserPurchasedProduct(productId, userId);
-    return { has_purchased: hasPurchased };
+    return { has_purchased: hasPurchased, has_license: hasPurchased };
   },
 
   // --- LIKES / WISHLIST ---

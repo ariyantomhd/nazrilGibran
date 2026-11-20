@@ -10,7 +10,7 @@ type BooleanFlag = boolean | 'true' | 'false';
 
 export interface ProductListParams {
   category_id?: string;
-  category?: string; // slug, mis. ?category=mobile-apps
+  category?: string;
   is_featured?: BooleanFlag;
   is_popular?: BooleanFlag;
   is_flash_sale?: BooleanFlag;
@@ -55,17 +55,14 @@ const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
 
 const PAID_ORDER_STATUSES = ['PAID', 'COMPLETED', 'SETTLED'];
+const ACTIVE_LICENSE_STATUSES = ['ACTIVE', 'VALID'];
 
-// Kolom tabel `users` yang dipakai untuk profil reviewer
 const USER_PROFILE_COLUMNS = 'id, username, avatar_url';
 const FALLBACK_REVIEWER_NAME = 'Themavia Member';
 
-// Kolom product_reviews yang aman untuk publik.
-// Sengaja TIDAK menyertakan: buyer_id, order_item_id, is_admin_injected, is_approved, updated_at.
 const PUBLIC_REVIEW_COLUMNS =
   'id, product_id, rating, title, review_text, is_verified_purchase, admin_reply, created_at, reviewer_name, reviewer_role, reviewer_avatar';
 
-// Untuk endpoint daftar review, buyer_id tetap dibutuhkan (user_id di respons + lookup profil)
 const LIST_REVIEW_COLUMNS = `${PUBLIC_REVIEW_COLUMNS}, buyer_id`;
 
 const FLAG_COLUMNS = ['is_featured', 'is_popular', 'is_flash_sale'] as const;
@@ -78,7 +75,6 @@ const SORT_OPTIONS = {
 
 // ---------- Helpers ----------
 
-// Hapus path storage privat sebelum record produk dikirim ke endpoint publik
 function sanitizePublicProduct<T extends Record<string, any>>(product: T): T {
   if (!product) return product;
   const {
@@ -124,7 +120,6 @@ async function assertPublishedProductExists(productId: string): Promise<void> {
   if (!data) throw new AppError('Product not found', 404);
 }
 
-// users.username NOT NULL, jadi email tidak perlu dipakai sebagai nama tampilan
 function toReviewerProfile(user: any): ReviewerProfile {
   return {
     name: user?.username || FALLBACK_REVIEWER_NAME,
@@ -132,8 +127,6 @@ function toReviewerProfile(user: any): ReviewerProfile {
   };
 }
 
-// Data identitas reviewer disimpan di baris review itu sendiri (reviewer_name, reviewer_avatar).
-// Profil user hanya dipakai sebagai cadangan kalau kolom tersebut kosong.
 function mapReviewRow(row: any, profile?: ReviewerProfile): ProductReviewItem {
   return {
     id: String(row.id),
@@ -159,26 +152,22 @@ async function getProducts(params: ProductListParams): Promise<Product[]> {
     .select('*, gallery:product_galleries(*)')
     .eq('status', 'PUBLISHED');
 
-  // Filter kategori: by id
   if (params.category_id) {
     query = query.eq('category_id', params.category_id);
   }
 
-  // Filter kategori: by slug dari frontend
   if (params.category) {
     const categoryId = await findCategoryIdBySlug(params.category);
     if (!categoryId) return [];
     query = query.eq('category_id', categoryId);
   }
 
-  // Section homepage (featured / popular / flash sale)
   for (const flag of FLAG_COLUMNS) {
     if (isTrue(params[flag])) {
       query = query.eq(flag, true);
     }
   }
 
-  // Sorting (default: latest)
   const { column, ascending } = SORT_OPTIONS[params.sort ?? 'latest'] ?? SORT_OPTIONS.latest;
   query = query.order(column, { ascending }).limit(clampLimit(params.limit));
 
@@ -223,11 +212,30 @@ async function getCategories(): Promise<ProductCategory[]> {
   return data as ProductCategory[];
 }
 
-// ---------- Purchase verification ----------
+// ---------- Purchase & Active License Verification (1-to-1 per user & product) ----------
 
 async function hasUserPurchasedProduct(productId: string, userId: string): Promise<boolean> {
   if (!productId || !userId) return false;
 
+  // 1. Primary check: verify active license ownership in `licenses` table for this exact product
+  const { data: userLicenses, error: licenseError } = await supabaseAdmin
+    .from('licenses')
+    .select('id, status')
+    .eq('user_id', userId)
+    .eq('product_id', productId);
+
+  if (!licenseError && userLicenses && userLicenses.length > 0) {
+    const hasActiveLicense = userLicenses.some((lic: any) =>
+      ACTIVE_LICENSE_STATUSES.includes(String(lic.status || 'ACTIVE').toUpperCase())
+    );
+    if (hasActiveLicense) {
+      return true;
+    }
+    // If license exists but was explicitly revoked/suspended, deny review access
+    return false;
+  }
+
+  // 2. Fallback check: verify paid order + order_item in case license record is still syncing
   const { data: userOrders, error: ordersError } = await supabaseAdmin
     .from('orders')
     .select('id, payment_status')
@@ -297,7 +305,6 @@ async function toggleProductLike(productId: string, userId: string): Promise<Pro
 
     if (deleteError) throw new Error(`Failed to remove like: ${deleteError.message}`);
   } else {
-    // product_likes.product_id bertipe text tanpa jaminan FK, jadi pastikan produknya ada
     await assertPublishedProductExists(productId);
 
     const { error: insertError } = await supabaseAdmin
@@ -323,7 +330,6 @@ async function getProductReviews(productId: string): Promise<ProductReviewsSumma
 
   const rows = rawReviews ?? [];
 
-  // Profil user hanya dibutuhkan untuk review yang reviewer_name-nya kosong
   const buyerIdsNeedingProfile = Array.from(
     new Set(
       rows
@@ -361,16 +367,16 @@ async function submitProductReview(
   rating: number,
   comment: string
 ): Promise<ProductReviewItem> {
-  // 1. Wajib verified purchase
-  const isVerifiedPurchase = await hasUserPurchasedProduct(productId, userId);
-  if (!isVerifiedPurchase) {
+  // 1. Strictly enforce verified license ownership for this specific product
+  const hasEligibleLicense = await hasUserPurchasedProduct(productId, userId);
+  if (!hasEligibleLicense) {
     throw new AppError(
-      'Verified purchase required: Only customers who purchased this product can submit a review.',
+      'Verified license required: Only customers who own an active license for this product can submit a review.',
       403
     );
   }
 
-  // 2. Profil reviewer (product_reviews.reviewer_name NOT NULL, jadi harus diisi saat insert)
+  // 2. Fetch reviewer profile
   const { data: userData } = await supabaseAdmin
     .from('users')
     .select(USER_PROFILE_COLUMNS)
@@ -379,7 +385,7 @@ async function submitProductReview(
 
   const profile = toReviewerProfile(userData);
 
-  // 3. Upsert: update kalau user sudah pernah review, kalau belum insert
+  // 3. Upsert: 1 license holder = 1 review per product (update if already reviewed, insert if new)
   const { data: existingReview, error: lookupError } = await supabaseAdmin
     .from('product_reviews')
     .select('id')

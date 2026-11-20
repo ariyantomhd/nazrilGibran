@@ -5,10 +5,10 @@ import { inspectClientTelemetry } from '../../utils/clientTelemetry';
 import { SocialProvider } from '../../types/auth';
 import { setAuthCookie, clearAuthCookie } from '../../utils/authCookie';
 
-const ALLOWED_PROVIDERS: SocialProvider[] = ['google', 'x'];
+const ALLOWED_PROVIDERS: SocialProvider[] = ['google'];
 
 const getFrontendBaseUrl = (): string =>
-  (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
+  (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/+$/, '');
 
 export const authController = {
   async socialAuth(req: Request, res: Response): Promise<void> {
@@ -42,7 +42,7 @@ export const authController = {
     try {
       const provider = String(req.params.provider).toLowerCase() as SocialProvider;
       if (!ALLOWED_PROVIDERS.includes(provider)) {
-        res.redirect(`${frontendUrl}/login?error=UnsupportedProvider`);
+        res.redirect(`${frontendUrl}/?login=true&error=UnsupportedProvider`);
         return;
       }
 
@@ -50,13 +50,13 @@ export const authController = {
 
       if (oauthError) {
         res.redirect(
-          `${frontendUrl}/login?error=${encodeURIComponent(String(oauthError))}`
+          `${frontendUrl}/?login=true&error=${encodeURIComponent(String(oauthError))}`
         );
         return;
       }
 
       if (!code || !state) {
-        res.redirect(`${frontendUrl}/login?error=MissingCodeOrState`);
+        res.redirect(`${frontendUrl}/?login=true&error=MissingCodeOrState`);
         return;
       }
 
@@ -71,12 +71,12 @@ export const authController = {
       // Store JWT session token in HttpOnly cookie instead of exposing it in URL query params
       setAuthCookie(res, token);
 
-      res.redirect(`${frontendUrl}/dashboard?auth=success`);
+      res.redirect(`${frontendUrl}/?auth=success`);
     } catch (error: unknown) {
       const message =
         error instanceof Error ? error.message : 'AuthenticationFailed';
       res.redirect(
-        `${frontendUrl}/login?error=${encodeURIComponent(message)}`
+        `${frontendUrl}/?login=true&error=${encodeURIComponent(message)}`
       );
     }
   },
