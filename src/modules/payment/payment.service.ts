@@ -45,8 +45,9 @@ export const paymentService = {
       throw new Error('This order has already been paid.');
     }
 
+    // Temporary sandbox allowance while testing in production environment
     if (process.env.NODE_ENV === 'production' && process.env.PAYPAL_MODE !== 'live') {
-      throw new Error('Critical Configuration Error: Live PayPal mode is required in production.');
+      console.warn('[PAYPAL_CONFIG_WARNING] Running PayPal in sandbox mode in production.');
     }
 
     const formattedAmount = Number(order.grand_total).toFixed(2);
