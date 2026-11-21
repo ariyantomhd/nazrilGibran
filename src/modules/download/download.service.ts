@@ -13,7 +13,7 @@ const licenseKeySchema = z
 
 const uuidSchema = z.string().uuid('Invalid license identifier format.');
 
-const SIGNED_URL_EXPIRES_SECONDS = 900; // 15 minutes
+const SIGNED_URL_EXPIRES_SECONDS = 60; // 1 minute short-lived token
 const MAX_DOWNLOADS_PER_24H = 10;
 
 function sanitizeStoragePath(rawPath: string): string {
@@ -71,7 +71,7 @@ export const downloadService = {
     const productTitle = product.title || product.name || 'themavia-product';
     const fileName = `${productTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.zip`;
 
-    // 2. Strictly enforce private Supabase Storage Signed URL (no raw external URL passthrough)
+    // 2. Strictly enforce private Supabase Storage Signed URL (60s short-lived token)
     const cleanStoragePath = sanitizeStoragePath(rawPath);
     const { data: storageData, error: storageError } = await supabaseAdmin.storage
       .from('product-files')
@@ -97,7 +97,7 @@ export const downloadService = {
       download_url: storageData.signedUrl,
       file_name: fileName,
       license_key: license.license_key,
-      expires_in: '15 Minutes',
+      expires_in: '1 Minute',
       message: 'Download link generated successfully.',
     };
   },
